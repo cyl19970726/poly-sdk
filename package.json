@@ -1,6 +1,6 @@
 {
   "name": "@catalyst-team/poly-sdk",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": false,
   "license": "MIT",
   "description": "TypeScript SDK for Polymarket - prediction markets trading, smart money analysis, and market data",
@@ -54,7 +54,7 @@
   "dependencies": {
     "@polymarket/clob-client": "^5.1.3",
     "@polymarket/real-time-data-client": "^1.4.0",
-    "@catalyst-team/cache": "workspace:*",
+    "@catalyst-team/cache": "^0.2.0",
     "@types/ws": "^8.18.1",
     "bottleneck": "^2.19.5",
     "ethers": "5",

@@ -38,6 +38,11 @@ async function main() {
   console.log('╚══════════════════════════════════════════════════════════╝');
   console.log('');
 
+  if (!PRIVATE_KEY) {
+    console.error('Error: PRIVATE_KEY environment variable is required');
+    process.exit(1);
+  }
+
   // Initialize SDK
   console.log('Initializing SDK...');
   const sdk = new PolymarketSDK({
