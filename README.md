@@ -937,6 +937,14 @@ import type {
 
 ---
 
+## ☕ Buy Me a Coffee
+
+If this SDK helps you, consider supporting the development:
+
+**Polygon (MATIC/USDC/USDT):** `0x58d2ff253998bc2f3b8f5bdbe9c52cad7b022739`
+
+---
+
 ## License
 
 MIT

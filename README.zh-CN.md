@@ -800,6 +800,14 @@ import type {
 
 ---
 
+## ☕ 请我喝杯咖啡
+
+如果这个 SDK 对你有帮助，欢迎支持开发：
+
+**Polygon (MATIC/USDC/USDT):** `0x58d2ff253998bc2f3b8f5bdbe9c52cad7b022739`
+
+---
+
 ## 许可证
 
 MIT
