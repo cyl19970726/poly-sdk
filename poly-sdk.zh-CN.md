@@ -7,7 +7,7 @@
 
 ☕ **请我喝杯咖啡 (EVM):** `0xd9c5d6111983ea3692f1d29bec4ac7d6f723217a`
 
-[English](README.md)
+[English](poly-sdk.md)
 
 ---
 
