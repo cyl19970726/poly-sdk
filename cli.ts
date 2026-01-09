@@ -184,15 +184,15 @@ const printSeparator = () => {
 // 执行命令
 const executeCommand = (command: string, args: string[] = []) => {
   return new Promise<void>((resolve) => {
-    console.log('\n' + info('执行命令: ') + bold(`${command} ${args.join(' ')}`));
+    console.log('\n' + info('执行命令: ') + bold(`npx tsx ${command} ${args.join(' ')}`));
     console.log(dim('─'.repeat(80)) + '\n');
 
     const child = spawn('npx', ['tsx', command, ...args], {
       stdio: 'inherit',
-      shell: true,
+      shell: false, // 移除 shell: true 以避免安全警告
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code: number | null) => {
       console.log('\n' + dim('─'.repeat(80)));
       if (code === 0) {
         console.log(success('✓ 命令执行完成'));
@@ -203,7 +203,7 @@ const executeCommand = (command: string, args: string[] = []) => {
       resolve();
     });
 
-    child.on('error', (err) => {
+    child.on('error', (err: Error) => {
       console.error(error(`执行错误: ${err.message}`));
       resolve();
     });
@@ -220,7 +220,7 @@ const showMainMenu = (): Promise<string> => {
     console.log(`  ${info('0')}. ${dim('退出')}\n`);
     printSeparator();
 
-    rl.question(bold('请输入选项 (0-2): '), (answer) => {
+    rl.question(bold('请输入选项 (0-2): '), (answer: string) => {
       resolve(answer.trim());
     });
   });
@@ -256,7 +256,7 @@ const showExamplesMenu = (): Promise<string | null> => {
     console.log(`\n  ${dim('0')}. ${dim('返回主菜单')}\n`);
     printSeparator();
 
-    rl.question(bold(`请选择 (0-${index - 1}): `), (answer) => {
+    rl.question(bold(`请选择 (0-${index - 1}): `), (answer: string) => {
       const choice = parseInt(answer.trim());
       if (choice === 0) {
         resolve(null);
@@ -292,7 +292,7 @@ const showScriptsMenu = (): Promise<string | null> => {
     console.log(`\n  ${dim('0')}. ${dim('返回主菜单')}\n`);
     printSeparator();
 
-    rl.question(bold(`请选择 (0-${index - 1}): `), (answer) => {
+    rl.question(bold(`请选择 (0-${index - 1}): `), (answer: string) => {
       const choice = parseInt(answer.trim());
       if (choice === 0) {
         resolve(null);
@@ -317,7 +317,7 @@ const handleScriptWithArgs = (scriptPath: string, cmd: ScriptCommand): Promise<s
     }
 
     console.log(bold(`\n此脚本需要额外参数: ${info(cmd.usage)}`));
-    rl.question(bold('请输入参数 (直接回车跳过): '), (answer) => {
+    rl.question(bold('请输入参数 (直接回车跳过): '), (answer: string) => {
       const args = answer.trim().split(/\s+/).filter(Boolean);
       resolve(args);
     });
@@ -327,7 +327,7 @@ const handleScriptWithArgs = (scriptPath: string, cmd: ScriptCommand): Promise<s
 // 等待用户输入
 const waitForEnter = (): Promise<void> => {
   return new Promise((resolve) => {
-    rl.question(bold('\n按回车键继续...'), () => {
+    rl.question(bold('\n按回车键继续...'), (_answer: string) => {
       resolve();
     });
   });
