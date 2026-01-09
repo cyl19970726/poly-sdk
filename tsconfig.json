@@ -14,7 +14,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "."
+    "rootDir": ".",
+    "types": ["node"]
   },
-  "include": ["src/**/*", "scripts/dip-arb/**/*", "list-commands.ts"]
+  "include": ["src/**/*", "scripts/dip-arb/**/*", "list-commands.ts", "cli.ts"]
 }
