@@ -8,6 +8,8 @@ dist/
 .env
 .env.local
 .env.*.local
+# Track .env.example (template file)
+!.env.example
 
 # IDE
 .idea/

@@ -1037,5 +1037,6 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ---
 
-**祝您使用愉快！** 🚀
+☕ **请我喝杯咖啡 (EVM):** `0xd9c5d6111983ea3692f1d29bec4ac7d6f723217a`
 
+**祝您使用愉快！** 🚀

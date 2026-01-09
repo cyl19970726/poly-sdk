@@ -221,13 +221,6 @@ else
     echo "   手动安装: npm install -g pnpm"
 fi
 
-# 验证 Python
-if command -v python3 &> /dev/null; then
-    echo "✅ Python: $(python3 --version)"
-else
-    echo "❌ Python: 未安装"
-fi
-
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "安装完成！"
