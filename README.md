@@ -1032,7 +1032,7 @@ POLYMARKET_PRIVATE_KEY=0xYourPrivateKey npx tsx scripts/xxx/script.ts
 
 ## 📖 More Resources
 
-- **Complete Documentation**: See [README.md](README.md) or [README.zh-CN.md](README.zh-CN.md)
+- **Complete Documentation**: See [README.md](README.md) 
 - **API Reference**: See [docs/02-API.md](docs/02-API.md)
 - **Architecture Design**: See [docs/00-design.md](docs/00-design.md)
 - **Arbitrage Explanation**: See [docs/01-polymarket-orderbook-arbitrage.md](docs/01-polymarket-orderbook-arbitrage.md)
