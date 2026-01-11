@@ -64,6 +64,9 @@ function loadEnvConfig(): EnvConfig {
     process.exit(1);
   }
 
+  // Dry Run 使用更寬鬆的限制（測試用）
+  const isDryRun = dryRun;
+
   return {
     dryRun,
     privateKey,
@@ -71,15 +74,15 @@ function loadEnvConfig(): EnvConfig {
     // Kill Switch
     killSwitchFile: process.env.KILL_SWITCH_FILE || '/tmp/poly-kill-switch-endgame',
 
-    // Fund Limiter（小額實盤推薦值）
-    maxDailyVolume: parseFloat(process.env.MAX_DAILY_VOLUME || '100'),
-    maxTotalPosition: parseFloat(process.env.MAX_TOTAL_POSITION || '200'),
-    maxSingleTrade: parseFloat(process.env.MAX_SINGLE_TRADE || '50'),
+    // Fund Limiter（Dry Run 放寬限制）
+    maxDailyVolume: parseFloat(process.env.MAX_DAILY_VOLUME || (isDryRun ? '100000' : '100')),
+    maxTotalPosition: parseFloat(process.env.MAX_TOTAL_POSITION || (isDryRun ? '50000' : '200')),
+    maxSingleTrade: parseFloat(process.env.MAX_SINGLE_TRADE || (isDryRun ? '10000' : '50')),
 
-    // Loss Circuit Breaker
-    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || '30'),
-    maxTotalLoss: parseFloat(process.env.MAX_TOTAL_LOSS || '50'),
-    maxConsecutiveLosses: parseInt(process.env.MAX_CONSECUTIVE_LOSSES || '5'),
+    // Loss Circuit Breaker（Dry Run 放寬限制）
+    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || (isDryRun ? '50000' : '30')),
+    maxTotalLoss: parseFloat(process.env.MAX_TOTAL_LOSS || (isDryRun ? '100000' : '50')),
+    maxConsecutiveLosses: parseInt(process.env.MAX_CONSECUTIVE_LOSSES || (isDryRun ? '1000' : '5')),
 
     // 策略
     initialCapital: parseFloat(process.env.INITIAL_CAPITAL || '100'),
@@ -231,9 +234,16 @@ class EndgameLiveTrading {
     }
 
     // 初始化 Trading Guard
+    // Dry Run 模式：保護機制極度寬鬆（幾乎不會觸發）
+    // Live 模式：保護機制正常啟用
     this.guard = new TradingGuard({
       environment: this.envConfig.dryRun ? 'paper' : 'live',
       requireConfirmation: !this.envConfig.dryRun,
+
+      // Dry Run: 只啟用 Kill Switch，其他禁用
+      enableKillSwitch: true,
+      enableFundLimiter: !this.envConfig.dryRun, // Dry Run 禁用
+      enableLossBreaker: !this.envConfig.dryRun, // Dry Run 禁用
 
       killSwitch: {
         filePath: this.envConfig.killSwitchFile,
