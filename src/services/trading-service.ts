@@ -327,10 +327,18 @@ export class TradingService {
           orderType
         );
 
+        // If CLOB client explicitly marks as failed, return error immediately
+        if (result.success === false) {
+          return {
+            success: false,
+            errorMsg: result.errorMsg || 'Limit order failed',
+          };
+        }
+
+        // Otherwise, detect success from presence of order ID or transaction hashes
         const success = result.success === true ||
-          (result.success !== false &&
-            ((result.orderID !== undefined && result.orderID !== '') ||
-              (result.transactionsHashes !== undefined && result.transactionsHashes.length > 0)));
+          ((result.orderID !== undefined && result.orderID !== '') ||
+            (result.transactionsHashes !== undefined && result.transactionsHashes.length > 0));
 
         return {
           success,
@@ -387,10 +395,18 @@ export class TradingService {
           orderType
         );
 
+        // If CLOB client explicitly marks as failed, return error immediately
+        if (result.success === false) {
+          return {
+            success: false,
+            errorMsg: result.errorMsg || 'Market order failed',
+          };
+        }
+
+        // Otherwise, detect success from presence of order ID or transaction hashes
         const success = result.success === true ||
-          (result.success !== false &&
-            ((result.orderID !== undefined && result.orderID !== '') ||
-              (result.transactionsHashes !== undefined && result.transactionsHashes.length > 0)));
+          ((result.orderID !== undefined && result.orderID !== '') ||
+            (result.transactionsHashes !== undefined && result.transactionsHashes.length > 0));
 
         return {
           success,
