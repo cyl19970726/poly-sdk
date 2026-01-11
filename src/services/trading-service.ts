@@ -74,6 +74,8 @@ export interface TradingServiceConfig {
   chainId?: number;
   /** Pre-generated API credentials (optional) */
   credentials?: ApiCredentials;
+  /** Funder address for proxy wallet (optional) */
+  funderAddress?: string;
 }
 
 // Order types
@@ -183,7 +185,14 @@ export class TradingService {
     if (this.initialized) return;
 
     // Create CLOB client with L1 auth (wallet)
-    this.clobClient = new ClobClient(CLOB_HOST, this.chainId, this.wallet);
+    this.clobClient = new ClobClient(
+      CLOB_HOST,
+      this.chainId,
+      this.wallet,
+      undefined,
+      undefined,
+      this.config.funderAddress
+    );
 
     // Get or create API credentials
     // We use derive-first strategy (opposite of official createOrDeriveApiKey)
@@ -206,7 +215,9 @@ export class TradingService {
         key: this.credentials.key,
         secret: this.credentials.secret,
         passphrase: this.credentials.passphrase,
-      }
+      },
+      undefined,
+      this.config.funderAddress
     );
 
     this.initialized = true;

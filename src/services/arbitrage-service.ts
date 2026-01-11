@@ -54,6 +54,8 @@ export interface ArbitrageServiceConfig {
   privateKey?: string;
   /** RPC URL for CTF operations */
   rpcUrl?: string;
+  /** Funder address for proxy wallet (optional) */
+  funderAddress?: string;
   /** Minimum profit threshold (default: 0.005 = 0.5%) */
   profitThreshold?: number;
   /** Minimum trade size in USDC (default: 5) */
@@ -331,6 +333,7 @@ export class ArbitrageService extends EventEmitter {
       this.tradingService = new TradingService(this.rateLimiter, cache, {
         privateKey: this.config.privateKey,
         chainId: 137,
+        funderAddress: this.config.funderAddress,
       });
     }
 

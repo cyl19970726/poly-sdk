@@ -119,6 +119,11 @@ export interface PolySDKOptions {
     secret: string;
     passphrase: string;
   };
+
+  /**
+   * Funder address for proxy wallet (optional)
+   */
+  funderAddress?: string;
 }
 
 // K-Line interval types
