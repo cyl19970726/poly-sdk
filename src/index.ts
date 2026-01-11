@@ -14,6 +14,19 @@ export { Cache, CACHE_TTL } from './core/cache.js';
 export { PolymarketError, ErrorCode, withRetry } from './core/errors.js';
 export * from './core/types.js';
 
+// Trading Safety Mechanisms (P0 for live trading)
+export { KillSwitch, getGlobalKillSwitch, resetGlobalKillSwitch } from './core/kill-switch.js';
+export type { KillSwitchConfig } from './core/kill-switch.js';
+
+export { FundLimiter, getGlobalFundLimiter, resetGlobalFundLimiter } from './core/fund-limiter.js';
+export type { FundLimiterConfig } from './core/fund-limiter.js';
+
+export { LossCircuitBreaker, getGlobalLossBreaker, resetGlobalLossBreaker } from './core/loss-circuit-breaker.js';
+export type { LossCircuitBreakerConfig } from './core/loss-circuit-breaker.js';
+
+export { TradingGuard, getGlobalTradingGuard, resetGlobalTradingGuard } from './core/trading-guard.js';
+export type { TradingGuardConfig } from './core/trading-guard.js';
+
 // Cache integration (new)
 export type { UnifiedCache } from './core/unified-cache.js';
 export { createUnifiedCache } from './core/unified-cache.js';
