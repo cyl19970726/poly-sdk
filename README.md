@@ -277,8 +277,13 @@ sdk.stop();  // Disconnect all services
 
 Order management using `@polymarket/clob-client`.
 
+**Important: Polymarket Order Minimums**
+- **Minimum order size**: 5 shares (`MIN_ORDER_SIZE_SHARES`)
+- **Minimum order value**: $1 USDC (`MIN_ORDER_VALUE_USDC`)
+- Orders below these limits are validated and rejected before sending to API
+
 ```typescript
-import { TradingService } from '@catalyst-team/poly-sdk';
+import { TradingService, MIN_ORDER_SIZE_SHARES, MIN_ORDER_VALUE_USDC } from '@catalyst-team/poly-sdk';
 
 const trading = new TradingService(rateLimiter, cache, {
   privateKey: process.env.POLYMARKET_PRIVATE_KEY!,

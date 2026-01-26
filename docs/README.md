@@ -4,13 +4,42 @@
 
 ---
 
+## 推荐学习路径
+
+### 🚀 新手入门（按顺序阅读）
+
+```
+1. 先理解原理（为什么 Polymarket 这样设计）
+   └── concepts/polymarket-principles.md
+
+2. 再看 API 参考（怎么使用）
+   └── api/01-overview.md
+
+3. 最后看架构（如何扩展）
+   └── architecture/01-overview.md
+```
+
+### ⚠️ 避免常见陷阱
+
+在开始写代码之前，请先了解这些关键概念（详见 polymarket-principles.md）：
+
+| 陷阱 | 问题 | 解决方案 |
+|------|------|----------|
+| **USDC 类型** | 用原生 USDC 进行 CTF 操作失败 | CTF 只接受 USDC.e (0x2791...) |
+| **Token ID** | 用标准 CTF 公式计算 Position ID | 必须从 CLOB API 获取 tokenId |
+| **订单簿镜像** | YES.ask + NO.ask = ~2.0 | 使用有效价格计算 |
+| **Outcome 名称** | 硬编码 "YES"/"NO" | 动态获取（可能是 "Up"/"Down"） |
+| **Redeem 方法** | `redeem()` 找不到余额 | 使用 `redeemByTokenIds()` |
+
+---
+
 ## Quick Navigation
 
 ### For Learners - Understanding Polymarket
 
 | Document | Description |
 |----------|-------------|
-| [concepts/polymarket-principles.md](concepts/polymarket-principles.md) | Polymarket three-layer architecture: CTF, CLOB, UMA |
+| [concepts/polymarket-principles.md](concepts/polymarket-principles.md) | **必读** - Polymarket 原理深度解析（含常见陷阱） |
 
 ### For Developers - API Reference
 

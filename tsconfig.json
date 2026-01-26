@@ -1,8 +1,9 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "."
   },
-  "include": ["src/**/*", "scripts/dip-arb/**/*"]
+  "include": ["src/**/*", "scripts/dip-arb/**/*"],
+  "exclude": ["src/wallets/privy-wallet.ts"]
 }

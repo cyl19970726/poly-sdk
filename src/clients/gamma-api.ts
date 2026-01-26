@@ -189,6 +189,70 @@ export interface GammaMarket {
 }
 
 /**
+ * Tag information from the Gamma API Tags endpoint
+ *
+ * @remarks
+ * Tags are used to categorize and filter markets. Note that the API only
+ * provides the tag metadata - type classification (person, asset, topic, etc.)
+ * and colors need to be maintained locally.
+ *
+ * @see {@link https://docs.polymarket.com/api-reference/tags/list-tags Tags API}
+ */
+export interface GammaTag {
+  /**
+   * Unique tag identifier (string, e.g., "235")
+   */
+  id: string;
+
+  /**
+   * Display label for the tag
+   * @example "Bitcoin", "Trump", "Politics"
+   */
+  label: string;
+
+  /**
+   * URL-friendly identifier
+   * @example "bitcoin", "trump", "politics"
+   */
+  slug: string;
+
+  /**
+   * When the tag was created
+   */
+  createdAt: Date;
+
+  /**
+   * When the tag was last updated
+   */
+  updatedAt: Date;
+
+  /**
+   * When the tag was published (optional)
+   */
+  publishedAt?: Date;
+
+  /**
+   * Force show this tag in UI (optional)
+   */
+  forceShow?: boolean;
+
+  /**
+   * Force hide this tag from UI (optional)
+   */
+  forceHide?: boolean;
+
+  /**
+   * ID of the user who last updated (optional)
+   */
+  updatedBy?: number;
+
+  /**
+   * Whether the tag needs translation
+   */
+  requiresTranslation: boolean;
+}
+
+/**
  * Event grouping from the Gamma API
  *
  * @remarks

@@ -1,0 +1,33 @@
+name: poly-sdk-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # This workflow is useful when `packages/poly-sdk` is promoted to be the repo root.
+      # In the monorepo, GitHub only reads workflows from the repository root `.github/`.
+      - name: Install
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Test
+        run: pnpm run test
+

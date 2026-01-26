@@ -10,9 +10,11 @@
  *   approve            - Set up all trading approvals
  *   swap <amount>      - Swap Native USDC to USDC.e
  *   deposit <amount>   - Deposit Native USDC to Polymarket
+ *   status             - Check deposit status for your wallet
+ *   addresses          - Get deposit addresses for your wallet
  */
 
-import { OnchainService, depositUsdc } from '../../src/index.js';
+import { OnchainService, depositUsdc, BridgeClient } from '../../src/index.js';
 import { Wallet, providers } from 'ethers';
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY || process.env.POLY_PRIVKEY || '';
@@ -83,8 +85,45 @@ async function main() {
       break;
     }
 
+    case 'addresses': {
+      const bridge = new BridgeClient();
+      console.log('Getting deposit addresses...');
+      const addresses = await bridge.createDepositAddresses(wallet.address);
+      console.log('\nDeposit Addresses (send assets here to fund your Polymarket account):');
+      console.log(`  EVM (Ethereum, Polygon, etc): ${addresses.address.evm}`);
+      console.log(`  Solana:                       ${addresses.address.svm}`);
+      console.log(`  Bitcoin:                      ${addresses.address.btc}`);
+      break;
+    }
+
+    case 'status': {
+      const bridge = new BridgeClient();
+      console.log('Getting deposit status...');
+      const addresses = await bridge.createDepositAddresses(wallet.address);
+      const transactions = await bridge.getDepositStatus(addresses.address.evm);
+
+      if (transactions.length === 0) {
+        console.log('\nNo deposits found.');
+        console.log('To deposit, send assets to your deposit address.');
+        console.log(`Use: npx tsx scripts/deposit/deposit.ts addresses`);
+      } else {
+        console.log(`\nFound ${transactions.length} deposit(s):\n`);
+        for (const tx of transactions.slice(0, 10)) {
+          const date = new Date(tx.createdTimeMs).toLocaleString();
+          const amountUsd = parseInt(tx.fromAmountBaseUnit) / 1e6;
+          console.log(`  ${tx.status.padEnd(20)} | $${amountUsd.toFixed(2).padStart(10)} | ${date}`);
+          console.log(`    ${BridgeClient.getStatusDescription(tx.status)}`);
+          if (tx.txHash) {
+            console.log(`    TX: ${tx.txHash}`);
+          }
+          console.log();
+        }
+      }
+      break;
+    }
+
     default:
-      console.log('Unknown command. Use: check, approve, swap, deposit');
+      console.log('Unknown command. Use: check, approve, swap, deposit, status, addresses');
   }
 }
 

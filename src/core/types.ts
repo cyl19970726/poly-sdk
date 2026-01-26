@@ -21,6 +21,145 @@ export type Side = 'BUY' | 'SELL';
 export type OrderType = 'GTC' | 'FOK' | 'GTD' | 'FAK';
 
 /**
+ * ============================================================================
+ * Order Status - Internal State Management
+ * ============================================================================
+ *
+ * This SDK uses a 7-state enum for detailed order lifecycle tracking.
+ * Polymarket CLOB API returns 4 states which are mapped to these internal states.
+ *
+ * State Flow (Happy Path):
+ * ┌────────┐    submit    ┌──────┐    match    ┌─────────────────┐    full fill    ┌────────┐
+ * │pending │ ───────────> │ open │ ─────────> │partially_filled │ ──────────────> │ filled │
+ * └────────┘              └──────┘             └─────────────────┘                 └────────┘
+ *
+ * State Flow (Cancellation Path):
+ * ┌────────┐                ┌───────────┐
+ * │pending │ ─── reject ──> │ rejected  │
+ * └────────┘                └───────────┘
+ *     │
+ *     │  ┌──────┐                ┌───────────┐
+ *     └─>│ open │ ─── cancel ──> │cancelled  │
+ *        └──────┘                └───────────┘
+ *           │
+ *           └─── expire ──────> ┌──────────┐
+ *                                │ expired  │
+ *                                └──────────┘
+ *
+ * State Mapping (Polymarket API → Internal):
+ * - API "live"      → open (order in orderbook, no fills)
+ * - API "matched"   → partially_filled (some fills) OR filled (fully filled)
+ * - API "delayed"   → pending (order submitted but not yet in orderbook)
+ * - API "cancelled" → cancelled
+ * - API "expired"   → expired (if GTD order expires)
+ * - (rejection)     → rejected (order failed validation, not in API)
+ *
+ * Terminal States: filled, cancelled, expired, rejected
+ * Active States: pending, open, partially_filled
+ *
+ * @see https://docs.polymarket.com/#tag/Orders (Polymarket order states)
+ * @see https://docs.polymarket.com/developers/CLOB/order-lifecycle (Order lifecycle)
+ */
+export enum OrderStatus {
+  /**
+   * pending - Order created locally but not yet submitted to exchange
+   *
+   * Transitions:
+   * - → open (submission successful)
+   * - → rejected (submission failed)
+   *
+   * Use case: Pre-submission validation, rate limiting queue
+   */
+  PENDING = 'pending',
+
+  /**
+   * open - Order submitted and active in orderbook, no fills yet
+   *
+   * Polymarket API status: "live"
+   * Transitions:
+   * - → partially_filled (first fill received)
+   * - → filled (immediate full fill, rare)
+   * - → cancelled (user cancels)
+   * - → expired (GTD order expires)
+   *
+   * Use case: Active maker orders, liquidity provision
+   */
+  OPEN = 'open',
+
+  /**
+   * partially_filled - Order has received some fills but not complete
+   *
+   * Polymarket API status: "matched" (size_matched > 0 && size_matched < original_size)
+   * Transitions:
+   * - → filled (remaining size filled)
+   * - → cancelled (user cancels remaining)
+   * - → expired (GTD order expires with remaining)
+   *
+   * Use case: Large orders filling incrementally
+   */
+  PARTIALLY_FILLED = 'partially_filled',
+
+  /**
+   * filled - Order completely filled
+   *
+   * Polymarket API status: "matched" (size_matched == original_size)
+   * Terminal state: No further transitions
+   *
+   * Use case: Successful order completion
+   */
+  FILLED = 'filled',
+
+  /**
+   * cancelled - Order cancelled by user or system
+   *
+   * Polymarket API status: "cancelled"
+   * Terminal state: No further transitions
+   *
+   * Use case: User cancellation, strategy stop, position limit reached
+   */
+  CANCELLED = 'cancelled',
+
+  /**
+   * expired - GTD order expired before completion
+   *
+   * Polymarket API status: "expired" (or inferred from expiration timestamp)
+   * Terminal state: No further transitions
+   *
+   * Use case: Time-limited orders
+   */
+  EXPIRED = 'expired',
+
+  /**
+   * rejected - Order rejected during submission (never reached exchange)
+   *
+   * Not returned by Polymarket API (local state only)
+   * Terminal state: No further transitions
+   *
+   * Common reasons:
+   * - Below minimum size/value ($1, 5 shares)
+   * - Invalid price (out of tick size)
+   * - Insufficient balance
+   * - API validation error
+   *
+   * Use case: Pre-flight validation failures
+   */
+  REJECTED = 'rejected',
+}
+
+/**
+ * Legacy string-based status type for backward compatibility
+ * @deprecated Use OrderStatus enum instead
+ */
+export type OrderStatusString =
+  | 'pending'
+  | 'open'
+  | 'partially_filled'
+  | 'filled'
+  | 'cancelled'
+  | 'expired'
+  | 'rejected';
+
+/**
  * Base trade interface with common fields
  *
  * This is the minimal set of fields that all trade types share.

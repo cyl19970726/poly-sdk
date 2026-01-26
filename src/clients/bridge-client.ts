@@ -90,7 +90,53 @@ export interface CreateDepositResponse {
 }
 
 /**
- * Deposit status tracking
+ * Deposit status types from Bridge API
+ *
+ * @see https://docs.polymarket.com/api-reference/bridge/get-deposit-status
+ */
+export type DepositStatusType =
+  | 'DEPOSIT_DETECTED'    // Deposit detected but not yet processing
+  | 'PROCESSING'          // Transaction is being routed and swapped
+  | 'ORIGIN_TX_CONFIRMED' // Origin transaction confirmed on source chain
+  | 'SUBMITTED'           // Transaction has been submitted to destination chain
+  | 'COMPLETED'           // Transaction completed successfully
+  | 'FAILED';             // Transaction encountered an error
+
+/**
+ * Single deposit transaction from Bridge API /status endpoint
+ */
+export interface DepositTransaction {
+  /** Source chain ID */
+  fromChainId: number;
+  /** Source token contract address */
+  fromTokenAddress: string;
+  /** Amount in base units (wei/smallest denomination) */
+  fromAmountBaseUnit: string;
+  /** Destination chain ID (137 for Polygon) */
+  toChainId: number;
+  /** Destination token address (USDC.e on Polygon) */
+  toTokenAddress: string;
+  /** Current status of the deposit */
+  status: DepositStatusType;
+  /** Timestamp when deposit was created (Unix milliseconds) */
+  createdTimeMs: number;
+  /** Source transaction hash (when available) */
+  txHash?: string;
+  /** Destination transaction hash (when completed) */
+  destinationTxHash?: string;
+}
+
+/**
+ * Response from Bridge API /status/{address} endpoint
+ */
+export interface DepositStatusResponse {
+  /** Array of deposit transactions for this address */
+  transactions: DepositTransaction[];
+}
+
+/**
+ * @deprecated Use DepositTransaction instead
+ * Legacy deposit status tracking (kept for backward compatibility)
  */
 export interface DepositStatus {
   /** Unique deposit ID */
@@ -310,6 +356,173 @@ export class BridgeClient {
   async getBtcDepositAddress(walletAddress: string): Promise<string> {
     const result = await this.createDepositAddresses(walletAddress);
     return result.address.btc;
+  }
+
+  // ===== Deposit Status =====
+
+  /**
+   * Get deposit status for a deposit address
+   *
+   * Check the status of deposits made to a specific deposit address.
+   * Returns all transactions associated with that address.
+   *
+   * @param depositAddress - The deposit address (EVM, SVM, or BTC) returned from createDepositAddresses
+   * @returns Array of deposit transactions with their current status
+   *
+   * @example
+   * ```typescript
+   * const bridge = new BridgeClient();
+   * const addresses = await bridge.createDepositAddresses('0xMyWallet');
+   *
+   * // After sending funds to the EVM deposit address...
+   * const transactions = await bridge.getDepositStatus(addresses.address.evm);
+   *
+   * for (const tx of transactions) {
+   *   console.log(`Status: ${tx.status}, Amount: ${tx.fromAmountBaseUnit}`);
+   *   if (tx.status === 'COMPLETED') {
+   *     console.log(`Completed! Destination tx: ${tx.destinationTxHash}`);
+   *   }
+   * }
+   * ```
+   */
+  async getDepositStatus(depositAddress: string): Promise<DepositTransaction[]> {
+    const response = await this.fetch(`/status/${depositAddress}`) as DepositStatusResponse;
+    return response.transactions || [];
+  }
+
+  /**
+   * Get the latest deposit transaction for a deposit address
+   *
+   * @param depositAddress - The deposit address
+   * @returns The most recent deposit transaction, or null if none
+   */
+  async getLatestDeposit(depositAddress: string): Promise<DepositTransaction | null> {
+    const transactions = await this.getDepositStatus(depositAddress);
+    if (transactions.length === 0) return null;
+
+    // Sort by createdTimeMs descending and return the most recent
+    return transactions.sort((a, b) => b.createdTimeMs - a.createdTimeMs)[0];
+  }
+
+  /**
+   * Check if a deposit is completed
+   *
+   * @param depositAddress - The deposit address
+   * @returns True if the latest deposit is completed
+   */
+  async isDepositCompleted(depositAddress: string): Promise<boolean> {
+    const latest = await this.getLatestDeposit(depositAddress);
+    return latest?.status === 'COMPLETED';
+  }
+
+  /**
+   * Check if a deposit has failed
+   *
+   * @param depositAddress - The deposit address
+   * @returns True if the latest deposit has failed
+   */
+  async isDepositFailed(depositAddress: string): Promise<boolean> {
+    const latest = await this.getLatestDeposit(depositAddress);
+    return latest?.status === 'FAILED';
+  }
+
+  /**
+   * Wait for a deposit to complete with polling
+   *
+   * Polls the deposit status until it reaches COMPLETED or FAILED status,
+   * or until the timeout is reached.
+   *
+   * @param depositAddress - The deposit address to monitor
+   * @param options - Polling options
+   * @returns The completed deposit transaction
+   * @throws Error if timeout is reached or deposit fails
+   *
+   * @example
+   * ```typescript
+   * const bridge = new BridgeClient();
+   * const addresses = await bridge.createDepositAddresses('0xMyWallet');
+   *
+   * // Send funds to the deposit address, then wait for completion
+   * try {
+   *   const deposit = await bridge.waitForDeposit(addresses.address.evm, {
+   *     timeoutMs: 10 * 60 * 1000, // 10 minutes
+   *     pollIntervalMs: 5000,       // Check every 5 seconds
+   *     onStatusChange: (tx) => {
+   *       console.log(`Status changed: ${tx.status}`);
+   *     },
+   *   });
+   *   console.log(`Deposit completed! Tx: ${deposit.destinationTxHash}`);
+   * } catch (err) {
+   *   console.error(`Deposit failed: ${err.message}`);
+   * }
+   * ```
+   */
+  async waitForDeposit(
+    depositAddress: string,
+    options: {
+      /** Timeout in milliseconds (default: 10 minutes) */
+      timeoutMs?: number;
+      /** Polling interval in milliseconds (default: 5 seconds) */
+      pollIntervalMs?: number;
+      /** Callback when status changes */
+      onStatusChange?: (tx: DepositTransaction) => void;
+    } = {}
+  ): Promise<DepositTransaction> {
+    const { timeoutMs = 10 * 60 * 1000, pollIntervalMs = 5000, onStatusChange } = options;
+
+    const startTime = Date.now();
+    let lastStatus: DepositStatusType | null = null;
+
+    while (Date.now() - startTime < timeoutMs) {
+      const latest = await this.getLatestDeposit(depositAddress);
+
+      if (latest) {
+        // Notify on status change
+        if (onStatusChange && latest.status !== lastStatus) {
+          onStatusChange(latest);
+          lastStatus = latest.status;
+        }
+
+        // Check for terminal states
+        if (latest.status === 'COMPLETED') {
+          return latest;
+        }
+
+        if (latest.status === 'FAILED') {
+          throw new Error(`Deposit failed. Transaction: ${latest.txHash || 'unknown'}`);
+        }
+      }
+
+      // Wait before next poll
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    throw new Error(`Timeout waiting for deposit to complete after ${timeoutMs}ms`);
+  }
+
+  /**
+   * Get a human-readable description of a deposit status
+   *
+   * @param status - The deposit status
+   * @returns Human-readable description
+   */
+  static getStatusDescription(status: DepositStatusType): string {
+    switch (status) {
+      case 'DEPOSIT_DETECTED':
+        return 'Deposit detected, waiting for confirmation';
+      case 'PROCESSING':
+        return 'Processing: routing and swapping';
+      case 'ORIGIN_TX_CONFIRMED':
+        return 'Source transaction confirmed, bridging to Polygon';
+      case 'SUBMITTED':
+        return 'Submitted to Polygon, awaiting confirmation';
+      case 'COMPLETED':
+        return 'Deposit completed successfully';
+      case 'FAILED':
+        return 'Deposit failed';
+      default:
+        return `Unknown status: ${status}`;
+    }
   }
 
   /**

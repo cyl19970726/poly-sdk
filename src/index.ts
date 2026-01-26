@@ -14,6 +14,20 @@ export { Cache, CACHE_TTL } from './core/cache.js';
 export { PolymarketError, ErrorCode, withRetry } from './core/errors.js';
 export * from './core/types.js';
 
+// Order status utilities
+export {
+  mapApiStatusToInternal,
+  mapInternalStatusToApi,
+  isActiveStatus,
+  isTerminalStatus,
+  isOrderOpen,
+  isOrderFilled,
+  canOrderBeCancelled,
+  calculateOrderProgress,
+  isValidStatusTransition,
+  getStatusDescription,
+} from './core/order-status.js';
+
 // Cache integration (new)
 export type { UnifiedCache } from './core/unified-cache.js';
 export { createUnifiedCache } from './core/unified-cache.js';
@@ -98,8 +112,18 @@ export type {
 export { MarketService, getIntervalMs as getIntervalMsService } from './services/market-service.js';
 export type { ResolvedMarketTokens } from './services/market-service.js';
 
-// Real-time (V2 - using official @polymarket/real-time-data-client)
+// Real-time (V2 - using custom RealTimeDataClient)
 export { RealtimeServiceV2 } from './services/realtime-service-v2.js';
+
+// RealTimeDataClient (low-level WebSocket client, use RealtimeServiceV2 for most cases)
+export {
+  RealTimeDataClient,
+  ConnectionStatus,
+  type ClobApiKeyCreds,
+  type Message as RealTimeMessage,
+  type RealTimeDataClientConfig,
+  type SubscriptionMessage,
+} from './realtime/index.js';
 export type {
   RealtimeServiceConfig,
   OrderbookSnapshot,
@@ -126,6 +150,119 @@ export type {
 } from './services/realtime-service-v2.js';
 
 // RealtimeService (legacy) has been removed - use RealtimeServiceV2 instead
+
+// ============================================================================
+// Catalyst (Internal Alpha) - query/realtime clients
+// ============================================================================
+
+export {
+  CatalystQueryService,
+  CatalystRealtimeService,
+} from './catalyst/index.js';
+
+export type {
+  CatalystQueryServiceConfig,
+  CatalystRealtimeServiceConfig,
+  CatalystWsTopic,
+  CatalystWsClientMessage,
+  CatalystWsServerMessage,
+  CatalystKlineUpdatePayload,
+  CatalystDepthUpdatePayload,
+  CatalystSpreadSnapshot,
+  CatalystKLineInterval,
+  CatalystKLineCandle,
+  // Query service response types
+  CatalystHealthResponse,
+  CatalystKlinesResponse,
+  CatalystTradesResponse,
+  CatalystTradeRecord,
+  CatalystOrderbookSnapshotsResponse,
+  CatalystOrderbookSnapshot,
+  CatalystDepthLineResponse,
+} from './catalyst/index.js';
+
+// ============================================================================
+// InsiderScan (Internal Alpha) - insider detection service
+// ============================================================================
+
+export { InsiderScanService } from './insider-scan/index.js';
+
+export type {
+  InsiderScanServiceConfig,
+  InsiderScanHealthResponse,
+  InsiderCandidateSummary,
+  InsiderCandidateDetails,
+  GetCandidatesResponse,
+  ScanMarketResponse,
+  ScanHistoryItem,
+  GetScanHistoryResponse,
+  InsiderStatsResponse,
+  GetCandidatesParams,
+  GetScanHistoryParams,
+} from './insider-scan/index.js';
+
+// WalletReportService (Client for WalletReportWorker)
+// ============================================================================
+
+export { WalletReportService } from './wallet-report/index.js';
+
+export type {
+  WalletReportServiceConfig,
+  WalletReportHealthResponse,
+  WalletReportStatsResponse,
+  GetWalletReportResponse,
+  ReportGeneratingResponse,
+  GetLeaderboardResponse,
+  ListReportsResponse,
+  ListReportsParams,
+  WalletReportData,
+  LeaderboardReportData,
+  LeaderboardEntry as WalletReportLeaderboardEntry,
+  DailyPerformance,
+  ReportType,
+  ReportStatus,
+  ReportSummary,
+} from './wallet-report/index.js';
+
+// SignalService (Client for SignalWorker)
+// ============================================================================
+
+export { SignalService } from './signal/index.js';
+
+export type {
+  SignalServiceConfig,
+  // Core types
+  SignalType,
+  SignalSeverity,
+  SignalStatus,
+  // Signal details
+  InsiderCharacteristicsSimple,
+  InsiderNewDetails,
+  InsiderLargeTradeDetails,
+  InsiderClusterDetails,
+  MarketSignalDetails,
+  WhaleTradeDetails,
+  SignalDetails,
+  // Signal types
+  SignalSummary,
+  Signal,
+  // Query params
+  GetSignalsParams,
+  // API responses
+  SignalHealthResponse,
+  SignalStatsResponse,
+  GetSignalsResponse,
+  UnreadCountResponse,
+  SuccessResponse as SignalSuccessResponse,
+  SignalCreatedResponse,
+  ProcessScanResponse,
+  // Creation params
+  CreateInsiderNewParams,
+  CreateInsiderLargeTradeParams,
+  CreateInsiderClusterParams,
+  CreateWhaleTradeParams,
+  ProcessInsiderScanParams,
+} from './signal/index.js';
 
 // ArbitrageService (Real-time arbitrage detection, execution, rebalancing, and settlement)
 export { ArbitrageService } from './services/arbitrage-service.js';
@@ -254,7 +391,43 @@ export type {
   // Rewards
   UserEarning,
   MarketReward,
+  // Enhanced rewards types (Q-Score optimization)
+  MarketRewardConfig,
+  QScoreParams,
+  QScoreEstimate,
+  RewardsSummary,
+  TopRewardMarket,
 } from './services/trading-service.js';
+
+// CTFManager - CTF operations + event monitoring (Recommended)
+export { CTFManager } from './services/ctf-manager.js';
+export type {
+  CTFManagerConfig,
+  CTFEvent,
+  SplitEvent,
+  MergeEvent,
+  RedeemEvent,
+  CTFOperationType as CTFManagerOperationType,
+} from './services/ctf-manager.js';
+
+// OrderManager - Unified order creation + lifecycle monitoring
+export { OrderManager, OrderHandleImpl } from './services/order-manager.js';
+export type {
+  OrderManagerConfig,
+  OrderMetadata,
+  // Event types
+  OrderStatusChangeEvent,
+  FillEvent,
+  TransactionEvent,
+  SettlementEvent,
+  CancelEvent,
+  ExpireEvent,
+  RejectEvent,
+  // OrderHandle types
+  OrderHandleStatus,
+  OrderFinalResult,
+  OrderHandle,
+} from './services/order-manager.js';
 
 // Market types from MarketService
 // Note: Side and Orderbook are now in core/types.ts (exported via `export * from './core/types.js'` above)
@@ -312,6 +485,11 @@ export type {
   BridgeSupportedAsset,
   DepositAddress,
   CreateDepositResponse,
+  // New deposit status types (from Bridge API /status endpoint)
+  DepositStatusType,
+  DepositTransaction,
+  DepositStatusResponse,
+  // Legacy (deprecated)
   DepositStatus,
   BridgeConfig,
   DepositResult,
@@ -372,6 +550,22 @@ export {
   ROUNDING_CONFIG,
 } from './utils/price-utils.js';
 export type { TickSize } from './utils/price-utils.js';
+
+// Wallet Management (Hot Wallet for automated trading)
+export {
+  HotWalletService,
+  // PrivyWallet, // Disabled: requires @privy-io/server-auth
+} from './wallets/index.js';
+export type {
+  HotWalletServiceConfig,
+  IWalletStore,
+  WalletInfo,
+  EncryptedData,
+  // PrivyWalletConfig, // Disabled: requires @privy-io/server-auth
+  // TransactionRequest as WalletTransactionRequest,
+  // TransactionResult as WalletTransactionResult,
+  // SignatureResult,
+} from './wallets/index.js';
 
 // NOTE: MCP tools have been moved to @catalyst-team/poly-mcp package
 // See packages/poly-mcp/
