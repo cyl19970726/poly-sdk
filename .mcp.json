@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "polymarket": {
+      "command": "node",
+      "args": ["/Users/hhh0x/meme/PredictionRouterV1/PerdictionRouter/packages/poly-mcp/dist/server.js"],
+      "env": {
+        "POLY_PRIVATE_KEY": "0x534f580d171686a880db4a5b09fc5981df16073f016c933b3e92ce3bc049019d"
+      }
+    }
+  }
+}
