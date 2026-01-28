@@ -73,10 +73,10 @@ async function main() {
   console.log(`   NO Price: ${noToken?.price}`);
   console.log(`   Volume 24hr: $${unifiedMarket.volume24hr?.toLocaleString() || 'N/A'}\n`);
 
-  // 6. Get K-Lines
-  console.log('6. Getting K-Line data...');
+  // 6. Get K-Lines (OHLCV from trade data)
+  console.log('6. Getting K-Line OHLCV data...');
   const interval: KLineInterval = '1h';
-  const klines = await sdk.markets.getKLines(market.conditionId, interval, { limit: 100 });
+  const klines = await sdk.markets.getKLinesOHLCV(market.conditionId, interval, { limit: 100 });
   console.log(`   Generated ${klines.length} candles (${interval} interval)\n`);
 
   if (klines.length > 0) {
@@ -87,9 +87,9 @@ async function main() {
     }
   }
 
-  // 7. Get Dual K-Lines
-  console.log('\n7. Getting dual K-Lines (YES + NO)...');
-  const dualKlines = await sdk.markets.getDualKLines(market.conditionId, interval, { limit: 100 });
+  // 7. Get Dual K-Lines (OHLCV from trade data)
+  console.log('\n7. Getting dual K-Lines OHLCV (YES + NO)...');
+  const dualKlines = await sdk.markets.getDualKLinesOHLCV(market.conditionId, interval, { limit: 100 });
   console.log(`   YES Candles: ${dualKlines.yes.length}`);
   console.log(`   NO Candles: ${dualKlines.no.length}`);
 
@@ -97,7 +97,7 @@ async function main() {
     console.log('\n   Spread Analysis (last 3):');
     for (const point of dualKlines.spreadAnalysis.slice(-3)) {
       const date = new Date(point.timestamp).toLocaleString();
-      console.log(`   [${date}] YES:${point.yesPrice.toFixed(3)} + NO:${point.noPrice.toFixed(3)} = ${point.spread.toFixed(4)} ${point.arbOpportunity}`);
+      console.log(`   [${date}] YES:${point.yesPrice.toFixed(3)} + NO:${point.noPrice.toFixed(3)} = ${point.priceSpread.toFixed(4)} ${point.arbOpportunity}`);
     }
   }
 

@@ -338,15 +338,24 @@ import { MarketService } from '@catalyst-team/poly-sdk';
 // 获取统一市场
 const market = await sdk.markets.getMarket('btc-100k-2024');
 
-// 获取 K 线
-const klines = await sdk.markets.getKLines(conditionId, '1h', { limit: 100 });
+// 获取价格线（来自 /prices-history API）
+const prices = await sdk.markets.getKLines(conditionId, '1d');
 
-// 获取双 K 线（YES + NO）含价差分析
-const dual = await sdk.markets.getDualKLines(conditionId, '1h');
-console.log(dual.yes);              // YES 代币蜡烛图
-console.log(dual.no);               // NO 代币蜡烛图
-console.log(dual.spreadAnalysis);   // 历史价差（成交价）
-console.log(dual.realtimeSpread);   // 实时价差（订单簿）
+// 获取双价格线（primary + secondary）含价差分析
+const dual = await sdk.markets.getDualKLines(conditionId, '1d');
+console.log(dual.primary);          // 主要结果价格点
+console.log(dual.secondary);        // 次要结果价格点
+console.log(dual.spreadAnalysis);   // 价差分析
+
+// 获取 OHLCV K 线（来自成交数据聚合）
+const klines = await sdk.markets.getKLinesOHLCV(conditionId, '1h', { limit: 100 });
+
+// 获取双 OHLCV K 线（YES + NO）含价差分析
+const dualOHLCV = await sdk.markets.getDualKLinesOHLCV(conditionId, '1h');
+console.log(dualOHLCV.yes);              // YES 代币蜡烛图
+console.log(dualOHLCV.no);               // NO 代币蜡烛图
+console.log(dualOHLCV.spreadAnalysis);   // 历史价差（成交价）
+console.log(dualOHLCV.realtimeSpread);   // 实时价差（订单簿）
 
 // 获取处理后的订单簿
 const orderbook = await sdk.markets.getProcessedOrderbook(conditionId);

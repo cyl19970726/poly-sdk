@@ -688,6 +688,68 @@ export class DataApiClient {
     return this.getTrades({ ...params, user: address });
   }
 
+  /**
+   * Get all trades for a market using time-window pagination.
+   *
+   * The Data API `/trades` endpoint returns most recent trades first
+   * and does not support offset pagination. This method uses a sliding
+   * time window (endTimestamp) to paginate backwards through trade history.
+   *
+   * Deduplication is performed using transactionHash or a composite key
+   * of timestamp+price+size.
+   *
+   * @param params - Query parameters (limit is managed internally)
+   * @param maxTrades - Maximum trades to fetch (default: 5000)
+   *
+   * @example
+   * ```typescript
+   * // Get all trades for a market in the last hour
+   * const now = Date.now();
+   * const trades = await client.getAllTrades({
+   *   market: conditionId,
+   *   startTimestamp: now - 60 * 60 * 1000,
+   *   endTimestamp: now,
+   * });
+   * ```
+   */
+  async getAllTrades(
+    params: Omit<TradesParams, 'limit'>,
+    maxTrades = 5000
+  ): Promise<Trade[]> {
+    const allTrades: Trade[] = [];
+    const batchSize = 1000;
+    const seenKeys = new Set<string>();
+    let currentEndTs = params.endTimestamp;
+
+    while (allTrades.length < maxTrades) {
+      const batch = await this.getTrades({
+        ...params,
+        limit: batchSize,
+        endTimestamp: currentEndTs,
+      });
+      if (batch.length === 0) break;
+
+      // Deduplicate using transactionHash or composite key
+      for (const trade of batch) {
+        const key = trade.transactionHash || `${trade.timestamp}-${trade.price}-${trade.size}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          allTrades.push(trade);
+        }
+      }
+
+      // Slide window: use oldest trade timestamp as next batch endTimestamp
+      const oldestTs = Math.min(...batch.map(t => t.timestamp));
+      if (currentEndTs !== undefined && oldestTs >= currentEndTs) break;
+      currentEndTs = oldestTs - 1;
+
+      if (params.startTimestamp && currentEndTs < params.startTimestamp) break;
+      if (batch.length < batchSize) break;
+    }
+
+    return allTrades.sort((a, b) => a.timestamp - b.timestamp).slice(0, maxTrades);
+  }
+
   // ===== Leaderboard =====
 
   /**

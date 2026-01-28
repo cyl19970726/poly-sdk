@@ -130,6 +130,7 @@ export type {
   LastTradeInfo,
   PriceChange,
   TickSizeChange,
+  BestBidAsk,
   MarketEvent,
   UserOrder,
   UserTrade,
@@ -430,11 +431,11 @@ export type {
 } from './services/order-manager.js';
 
 // Market types from MarketService
-// Note: Side and Orderbook are now in core/types.ts (exported via `export * from './core/types.js'` above)
+// Note: Side, Orderbook, PricePoint, PriceLineSpreadPoint, DualPriceLineData are
+// now in core/types.ts (exported via `export * from './core/types.js'` above)
 export type {
   Market,
   MarketToken,
-  PricePoint,
   PriceHistoryParams,
   PriceHistoryIntervalString,
 } from './services/market-service.js';

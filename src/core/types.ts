@@ -728,3 +728,63 @@ export interface TokenUnderlyingCorrelation {
   /** Correlation coefficients (if calculated) */
   correlation?: TokenUnderlyingCorrelationCoefficients;
 }
+
+// ===== Price Line Types (from /prices-history API) =====
+
+/**
+ * A single price point from Polymarket's /prices-history endpoint.
+ *
+ * Unlike KLineCandle (OHLCV from trade aggregation), this is a pre-computed
+ * price point directly from the CLOB API, suitable for lightweight price charts.
+ */
+export interface PricePoint {
+  /** Timestamp (Unix seconds) */
+  timestamp: number;
+  /** Price value (0-1 for binary markets) */
+  price: number;
+}
+
+/**
+ * Spread analysis point for dual price lines.
+ *
+ * Aligns primary and secondary outcome prices by timestamp
+ * and calculates their sum and deviation from 1.0.
+ */
+export interface PriceLineSpreadPoint {
+  /** Timestamp (Unix seconds) */
+  timestamp: number;
+  /** Primary outcome price (e.g., Yes/Up) */
+  primaryPrice: number;
+  /** Secondary outcome price (e.g., No/Down) */
+  secondaryPrice: number;
+  /** Sum of primary + secondary prices (should be ~1.0) */
+  priceSum: number;
+  /** Deviation from equilibrium: priceSum - 1 */
+  priceSpread: number;
+}
+
+/**
+ * Dual price line data from /prices-history API.
+ *
+ * Contains price history for both outcomes of a binary market,
+ * with optional spread analysis. This is lighter-weight than
+ * DualKLineData (which uses OHLCV candles from trade aggregation).
+ *
+ * Data source: Polymarket CLOB /prices-history endpoint
+ */
+export interface DualPriceLineData {
+  /** Market condition ID */
+  conditionId: string;
+  /** Price history interval (1h, 6h, 1d, 1w, max) */
+  interval: string;
+  /** Fidelity parameter used for the query */
+  fidelity?: number;
+  /** Primary outcome price history (e.g., Yes/Up) */
+  primary: PricePoint[];
+  /** Secondary outcome price history (e.g., No/Down) */
+  secondary: PricePoint[];
+  /** Outcome names [primary, secondary] */
+  outcomes: [string, string];
+  /** Spread analysis (timestamp-aligned primary + secondary) */
+  spreadAnalysis?: PriceLineSpreadPoint[];
+}

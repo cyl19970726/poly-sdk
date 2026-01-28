@@ -133,8 +133,10 @@
 
 | 方法 | 参数 | 返回值 | 说明 |
 |------|------|--------|------|
-| `getKLines(conditionId, interval, options?)` | `string, KLineInterval, options` | `Promise<KLineCandle[]>` | 单 Token K线 |
-| `getDualKLines(conditionId, interval, options?)` | `string, KLineInterval, options` | `Promise<DualKLineData>` | YES+NO 双 K线 |
+| `getKLines(conditionId, interval, options?)` | `string, PriceHistoryIntervalString, options` | `Promise<PricePoint[]>` | 价格线 (from /prices-history) |
+| `getDualKLines(conditionId, interval, options?)` | `string, PriceHistoryIntervalString, options` | `Promise<DualPriceLineData>` | 双价格线 (from /prices-history) |
+| `getKLinesOHLCV(conditionId, interval, options?)` | `string, KLineInterval, options` | `Promise<KLineCandle[]>` | 单 Token OHLCV K线 (from /trades) |
+| `getDualKLinesOHLCV(conditionId, interval, options?)` | `string, KLineInterval, options` | `Promise<DualKLineData>` | YES+NO 双 OHLCV K线 (from /trades) |
 
 ### 4.4 价差分析
 

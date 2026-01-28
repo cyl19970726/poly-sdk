@@ -39,6 +39,9 @@ import type {
   UnderlyingAsset,
   TokenUnderlyingCorrelation,
   TokenUnderlyingDataPoint,
+  PricePoint,
+  PriceLineSpreadPoint,
+  DualPriceLineData,
 } from '../core/types.js';
 import type { BinanceService, BinanceInterval } from './binance-service.js';
 
@@ -93,10 +96,8 @@ export interface PriceHistoryParams {
   fidelity?: number;
 }
 
-export interface PricePoint {
-  timestamp: number;
-  price: number;
-}
+// PricePoint is now in core/types.ts - re-export for backward compatibility
+export type { PricePoint } from '../core/types.js';
 
 export interface MarketServiceConfig {
   /** Private key for CLOB client auth (optional, for authenticated endpoints) */
@@ -580,10 +581,140 @@ export class MarketService {
     throw new PolymarketError(ErrorCode.MARKET_NOT_FOUND, `Market not found: ${conditionId}`);
   }
 
-  // ===== K-Line Aggregation =====
+  // ===== K-Line: Price Lines (from /prices-history API) =====
 
   /**
-   * Get K-Line candles for a market (single token)
+   * Get price line for a market outcome from /prices-history API.
+   *
+   * This returns pre-computed price points from the CLOB API,
+   * suitable for lightweight price charts. For OHLCV candles
+   * aggregated from trade data, use `getKLinesOHLCV()` instead.
+   *
+   * @param conditionId - Market condition ID
+   * @param interval - Price history interval (1h, 6h, 1d, 1w, max)
+   * @param options - Query options
+   * @param options.fidelity - Number of price points to return
+   * @param options.startTs - Start timestamp (Unix seconds)
+   * @param options.endTs - End timestamp (Unix seconds)
+   * @param options.outcomeIndex - Outcome index (0 = primary, 1 = secondary; default: 0)
+   *
+   * @example
+   * ```typescript
+   * // Get 1-day price line for primary outcome
+   * const prices = await sdk.markets.getKLines(conditionId, '1d');
+   *
+   * // Get secondary outcome with fidelity
+   * const noLine = await sdk.markets.getKLines(conditionId, '1h', {
+   *   outcomeIndex: 1,
+   *   fidelity: 100,
+   * });
+   * ```
+   */
+  async getKLines(
+    conditionId: string,
+    interval: PriceHistoryIntervalString,
+    options?: {
+      fidelity?: number;
+      startTs?: number;
+      endTs?: number;
+      outcomeIndex?: number;
+    }
+  ): Promise<PricePoint[]> {
+    const outcomeIndex = options?.outcomeIndex ?? 0;
+    const resolved = await this.resolveMarketTokens(conditionId);
+    if (!resolved) {
+      throw new PolymarketError(ErrorCode.MARKET_NOT_FOUND, `Cannot resolve tokens for market: ${conditionId}`);
+    }
+
+    const tokenId = outcomeIndex === 0 ? resolved.primaryTokenId : resolved.secondaryTokenId;
+
+    const points = await this.getPricesHistory({
+      tokenId,
+      interval,
+      fidelity: options?.fidelity,
+      startTs: options?.startTs,
+      endTs: options?.endTs,
+    });
+
+    // If no data returned, try fallback with 'max' interval (market may be closed)
+    if (points.length === 0 && interval !== 'max') {
+      const market = await this.getClobMarket(conditionId);
+      if (market?.closed) {
+        return this.getPricesHistory({
+          tokenId,
+          interval: 'max',
+          fidelity: options?.fidelity,
+        });
+      }
+    }
+
+    return points;
+  }
+
+  /**
+   * Get dual price lines (primary + secondary) from /prices-history API.
+   *
+   * Fetches price history for both outcomes in parallel and optionally
+   * computes spread analysis. For OHLCV dual candles from trade data,
+   * use `getDualKLinesOHLCV()` instead.
+   *
+   * @param conditionId - Market condition ID
+   * @param interval - Price history interval (1h, 6h, 1d, 1w, max)
+   * @param options - Query options
+   *
+   * @example
+   * ```typescript
+   * const dual = await sdk.markets.getDualKLines(conditionId, '1d');
+   * console.log(dual.primary.length);     // Primary outcome price points
+   * console.log(dual.secondary.length);   // Secondary outcome price points
+   * console.log(dual.spreadAnalysis);     // Spread analysis
+   * ```
+   */
+  async getDualKLines(
+    conditionId: string,
+    interval: PriceHistoryIntervalString,
+    options?: {
+      fidelity?: number;
+      startTs?: number;
+      endTs?: number;
+    }
+  ): Promise<DualPriceLineData> {
+    const resolved = await this.resolveMarketTokens(conditionId);
+    if (!resolved) {
+      throw new PolymarketError(ErrorCode.MARKET_NOT_FOUND, `Cannot resolve tokens for market: ${conditionId}`);
+    }
+
+    const sharedOpts = {
+      fidelity: options?.fidelity,
+      startTs: options?.startTs,
+      endTs: options?.endTs,
+    };
+
+    const [primary, secondary] = await Promise.all([
+      this.getKLines(conditionId, interval, { ...sharedOpts, outcomeIndex: 0 }),
+      this.getKLines(conditionId, interval, { ...sharedOpts, outcomeIndex: 1 }),
+    ]);
+
+    const spreadAnalysis = this.analyzePriceLineSpread(primary, secondary);
+
+    return {
+      conditionId,
+      interval,
+      fidelity: options?.fidelity,
+      primary,
+      secondary,
+      outcomes: resolved.outcomes,
+      spreadAnalysis,
+    };
+  }
+
+  // ===== K-Line: OHLCV Candles (from Data API /trades) =====
+
+  /**
+   * Get OHLCV K-Line candles for a market (single token).
+   *
+   * Aggregates raw trade data into OHLCV candles. For lightweight
+   * price charts from /prices-history, use `getKLines()` instead.
    *
    * @param conditionId - Market condition ID
    * @param interval - K-line interval (1s, 5s, 15s, 30s, 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d)
@@ -593,18 +724,26 @@ export class MarketService {
    * @param options.outcomeIndex - Filter by outcome index (0 = primary, 1 = secondary)
    * @param options.startTimestamp - Start timestamp (Unix ms) - filter trades after this time
    * @param options.endTimestamp - End timestamp (Unix ms) - filter trades before this time
+   * @param options.paginate - Use paginated fetching for more complete data (default: false)
+   * @param options.maxTrades - Maximum trades when paginating (default: 5000)
    *
    * @example
    * ```typescript
    * // Get 5s candles for the last 15 minutes
    * const now = Date.now();
-   * const candles = await sdk.markets.getKLines(conditionId, '5s', {
+   * const candles = await sdk.markets.getKLinesOHLCV(conditionId, '5s', {
    *   startTimestamp: now - 15 * 60 * 1000,
    *   endTimestamp: now,
    * });
+   *
+   * // Get all available trades with pagination
+   * const allCandles = await sdk.markets.getKLinesOHLCV(conditionId, '1h', {
+   *   paginate: true,
+   *   maxTrades: 5000,
+   * });
    * ```
    */
-  async getKLines(
+  async getKLinesOHLCV(
     conditionId: string,
     interval: KLineInterval,
     options?: {
@@ -613,17 +752,29 @@ export class MarketService {
       outcomeIndex?: number;
       startTimestamp?: number;
       endTimestamp?: number;
+      paginate?: boolean;
+      maxTrades?: number;
     }
   ): Promise<KLineCandle[]> {
     if (!this.dataApi) {
-      throw new PolymarketError(ErrorCode.INVALID_CONFIG, 'DataApiClient is required for K-Line data');
+      throw new PolymarketError(ErrorCode.INVALID_CONFIG, 'DataApiClient is required for K-Line OHLCV data');
     }
-    const trades = await this.dataApi.getTrades({
-      market: conditionId,
-      limit: options?.limit || 1000,
-      startTimestamp: options?.startTimestamp,
-      endTimestamp: options?.endTimestamp,
-    });
+
+    let trades;
+    if (options?.paginate) {
+      trades = await this.dataApi.getAllTrades({
+        market: conditionId,
+        startTimestamp: options?.startTimestamp,
+        endTimestamp: options?.endTimestamp,
+      }, options?.maxTrades || 5000);
+    } else {
+      trades = await this.dataApi.getTrades({
+        market: conditionId,
+        limit: options?.limit || 1000,
+        startTimestamp: options?.startTimestamp,
+        endTimestamp: options?.endTimestamp,
+      });
+    }
 
     // Filter by token/outcome if specified
     let filteredTrades = trades;
@@ -637,7 +788,11 @@ export class MarketService {
   }
 
   /**
-   * Get dual K-Lines (YES + NO tokens)
+   * Get dual OHLCV K-Lines (YES + NO tokens) from trade data.
+   *
+   * Aggregates raw trade data into dual OHLCV candles with spread analysis
+   * and optional real-time orderbook data. For lightweight dual price lines
+   * from /prices-history, use `getDualKLines()` instead.
    *
    * @param conditionId - Market condition ID
    * @param interval - K-line interval (1s, 5s, 15s, 30s, 1m, 5m, 15m, 30m, 1h, 4h, 12h, 1d)
@@ -645,37 +800,51 @@ export class MarketService {
    * @param options.limit - Maximum number of trades to fetch for aggregation (default: 1000)
    * @param options.startTimestamp - Start timestamp (Unix ms) - filter trades after this time
    * @param options.endTimestamp - End timestamp (Unix ms) - filter trades before this time
+   * @param options.paginate - Use paginated fetching for more complete data (default: false)
+   * @param options.maxTrades - Maximum trades when paginating (default: 5000)
    *
    * @example
    * ```typescript
    * // Get 15s dual K-lines for a 15-minute market
    * const now = Date.now();
-   * const data = await sdk.markets.getDualKLines(conditionId, '15s', {
+   * const data = await sdk.markets.getDualKLinesOHLCV(conditionId, '15s', {
    *   startTimestamp: now - 15 * 60 * 1000,
    *   endTimestamp: now,
    * });
    * console.log(`Up candles: ${data.yes.length}, Down candles: ${data.no.length}`);
    * ```
    */
-  async getDualKLines(
+  async getDualKLinesOHLCV(
     conditionId: string,
     interval: KLineInterval,
     options?: {
       limit?: number;
       startTimestamp?: number;
       endTimestamp?: number;
+      paginate?: boolean;
+      maxTrades?: number;
     }
   ): Promise<DualKLineData> {
     if (!this.dataApi) {
-      throw new PolymarketError(ErrorCode.INVALID_CONFIG, 'DataApiClient is required for K-Line data');
+      throw new PolymarketError(ErrorCode.INVALID_CONFIG, 'DataApiClient is required for K-Line OHLCV data');
     }
     const market = await this.getMarket(conditionId);
-    const trades = await this.dataApi.getTrades({
-      market: conditionId,
-      limit: options?.limit || 1000,
-      startTimestamp: options?.startTimestamp,
-      endTimestamp: options?.endTimestamp,
-    });
+
+    let trades;
+    if (options?.paginate) {
+      trades = await this.dataApi.getAllTrades({
+        market: conditionId,
+        startTimestamp: options?.startTimestamp,
+        endTimestamp: options?.endTimestamp,
+      }, options?.maxTrades || 5000);
+    } else {
+      trades = await this.dataApi.getTrades({
+        market: conditionId,
+        limit: options?.limit || 1000,
+        startTimestamp: options?.startTimestamp,
+        endTimestamp: options?.endTimestamp,
+      });
+    }
 
     // Separate trades by outcome using index (more reliable than name matching)
     // outcomeIndex 0 = primary (Yes/Up/Team1), outcomeIndex 1 = secondary (No/Down/Team2)
@@ -776,7 +945,7 @@ export class MarketService {
 
     // Fetch data in parallel
     const [dualKLines, binanceKLines] = await Promise.all([
-      this.getDualKLines(conditionId, interval, { limit }),
+      this.getDualKLinesOHLCV(conditionId, interval, { limit }),
       this.binanceService.getKLines(
         UNDERLYING_TO_SYMBOL[underlying],
         binanceInterval,
@@ -1035,6 +1204,46 @@ export class MarketService {
         priceSum,
         priceSpread,
         arbOpportunity,
+      });
+    }
+
+    return analysis;
+  }
+
+  /**
+   * Analyze spread from price line data (from /prices-history API).
+   *
+   * Aligns primary and secondary price points by timestamp and computes
+   * the sum and deviation from 1.0 at each aligned point.
+   */
+  private analyzePriceLineSpread(
+    primary: PricePoint[],
+    secondary: PricePoint[]
+  ): PriceLineSpreadPoint[] {
+    const primaryMap = new Map(primary.map(p => [p.timestamp, p.price]));
+    const secondaryMap = new Map(secondary.map(p => [p.timestamp, p.price]));
+
+    const allTimestamps = [...new Set([...primaryMap.keys(), ...secondaryMap.keys()])].sort((a, b) => a - b);
+
+    let lastPrimary = 0.5;
+    let lastSecondary = 0.5;
+    const analysis: PriceLineSpreadPoint[] = [];
+
+    for (const ts of allTimestamps) {
+      const pPrice = primaryMap.get(ts);
+      const sPrice = secondaryMap.get(ts);
+
+      if (pPrice !== undefined) lastPrimary = pPrice;
+      if (sPrice !== undefined) lastSecondary = sPrice;
+
+      const priceSum = lastPrimary + lastSecondary;
+
+      analysis.push({
+        timestamp: ts,
+        primaryPrice: lastPrimary,
+        secondaryPrice: lastSecondary,
+        priceSum,
+        priceSpread: priceSum - 1,
       });
     }
 

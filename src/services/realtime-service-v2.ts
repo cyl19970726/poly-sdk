@@ -62,6 +62,8 @@ export interface LastTradeInfo {
   side: 'BUY' | 'SELL';
   size: number;
   timestamp: number;
+  /** Fee rate in basis points (e.g., 200 = 2%) */
+  feeRateBps?: number;
 }
 
 export interface PriceChange {
@@ -74,6 +76,15 @@ export interface TickSizeChange {
   assetId: string;
   oldTickSize: string;
   newTickSize: string;
+  timestamp: number;
+}
+
+export interface BestBidAsk {
+  assetId: string;
+  market: string;
+  bestBid: number;
+  bestAsk: number;
+  spread: number;
   timestamp: number;
 }
 
@@ -237,6 +248,7 @@ export interface MarketDataHandlers {
   onPriceChange?: (change: PriceChange) => void;
   onLastTrade?: (trade: LastTradeInfo) => void;
   onTickSizeChange?: (change: TickSizeChange) => void;
+  onBestBidAsk?: (bestBidAsk: BestBidAsk) => void;
   onMarketEvent?: (event: MarketEvent) => void;
   onError?: (error: Error) => void;
 }
@@ -417,10 +429,17 @@ export class RealtimeServiceV2 extends EventEmitter {
       }
     };
 
+    const bestBidAskHandler = (bba: BestBidAsk) => {
+      if (tokenIds.includes(bba.assetId)) {
+        handlers.onBestBidAsk?.(bba);
+      }
+    };
+
     this.on('orderbook', orderbookHandler);
     this.on('priceChange', priceChangeHandler);
     this.on('lastTrade', lastTradeHandler);
     this.on('tickSizeChange', tickSizeHandler);
+    this.on('bestBidAsk', bestBidAskHandler);
 
     const subscription: MarketSubscription = {
       id: subId,
@@ -432,6 +451,7 @@ export class RealtimeServiceV2 extends EventEmitter {
         this.off('priceChange', priceChangeHandler);
         this.off('lastTrade', lastTradeHandler);
         this.off('tickSizeChange', tickSizeHandler);
+        this.off('bestBidAsk', bestBidAskHandler);
 
         // Remove these token IDs from accumulated set
         for (const tokenId of tokenIds) {
@@ -489,6 +509,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       { topic: 'clob_market', type: 'price_change', filters: filterStr },
       { topic: 'clob_market', type: 'last_trade_price', filters: filterStr },
       { topic: 'clob_market', type: 'tick_size_change', filters: filterStr },
+      { topic: 'clob_market', type: 'best_bid_ask', filters: filterStr },
     ];
 
     const subMsg = { subscriptions };
@@ -1210,7 +1231,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       case 'best_bid_ask': {
         // best_bid_ask event: Best prices changed (feature-flagged)
         // @see https://docs.polymarket.com/developers/CLOB/websocket/market-channel
-        const bestPrices = {
+        const bestPrices: BestBidAsk = {
           assetId: payload.asset_id as string || '',
           market: payload.market as string || '',
           bestBid: Number(payload.best_bid) || 0,
@@ -1440,12 +1461,14 @@ export class RealtimeServiceV2 extends EventEmitter {
   }
 
   private parseLastTrade(payload: Record<string, unknown>, timestamp: number): LastTradeInfo {
+    const feeRateBps = payload.fee_rate_bps !== undefined ? Number(payload.fee_rate_bps) : undefined;
     return {
       assetId: payload.asset_id as string || '',
       price: parseFloat(payload.price as string) || 0,
       side: payload.side as 'BUY' | 'SELL' || 'BUY',
       size: parseFloat(payload.size as string) || 0,
       timestamp: this.normalizeTimestamp(payload.timestamp) || timestamp,
+      feeRateBps: feeRateBps !== undefined && !isNaN(feeRateBps) ? feeRateBps : undefined,
     };
   }
 

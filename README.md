@@ -352,15 +352,24 @@ import { MarketService } from '@catalyst-team/poly-sdk';
 // Get unified market
 const market = await sdk.markets.getMarket('btc-100k-2024');
 
-// Get K-Lines
-const klines = await sdk.markets.getKLines(conditionId, '1h', { limit: 100 });
+// Get price lines (from /prices-history API)
+const prices = await sdk.markets.getKLines(conditionId, '1d');
 
-// Get dual K-Lines (YES + NO) with spread analysis
-const dual = await sdk.markets.getDualKLines(conditionId, '1h');
-console.log(dual.yes);              // YES token candles
-console.log(dual.no);               // NO token candles
-console.log(dual.spreadAnalysis);   // Historical spread (trade prices)
-console.log(dual.realtimeSpread);   // Real-time spread (orderbook)
+// Get dual price lines (primary + secondary) with spread analysis
+const dual = await sdk.markets.getDualKLines(conditionId, '1d');
+console.log(dual.primary);          // Primary outcome price points
+console.log(dual.secondary);        // Secondary outcome price points
+console.log(dual.spreadAnalysis);   // Spread analysis
+
+// Get OHLCV candles (from trade data aggregation)
+const klines = await sdk.markets.getKLinesOHLCV(conditionId, '1h', { limit: 100 });
+
+// Get dual OHLCV K-Lines (YES + NO) with spread analysis
+const dualOHLCV = await sdk.markets.getDualKLinesOHLCV(conditionId, '1h');
+console.log(dualOHLCV.yes);              // YES token candles
+console.log(dualOHLCV.no);               // NO token candles
+console.log(dualOHLCV.spreadAnalysis);   // Historical spread (trade prices)
+console.log(dualOHLCV.realtimeSpread);   // Real-time spread (orderbook)
 
 // Get processed orderbook
 const orderbook = await sdk.markets.getProcessedOrderbook(conditionId);
