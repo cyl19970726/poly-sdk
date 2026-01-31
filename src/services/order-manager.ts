@@ -1171,14 +1171,31 @@ export class OrderManager extends EventEmitter {
     const { RealtimeServiceV2 } = await import('./realtime-service-v2.js');
     this.realtimeService = new RealtimeServiceV2({ autoReconnect: true });
 
-    // Connect to WebSocket
+    // Connect to WebSocket and wait for connection to be established
+    // This fixes a race condition where subscribeUserEvents() was called
+    // before the connection was ready, causing subscriptions to be silently dropped
     if (this.realtimeService) {
-      this.realtimeService.connect();
+      console.log(`[OrderManager] Connecting to WebSocket...`);
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('WebSocket connection timeout (10s)'));
+        }, 10_000);
+
+        this.realtimeService!.once('connected', () => {
+          clearTimeout(timeout);
+          console.log(`[OrderManager] WebSocket connected successfully`);
+          resolve();
+        });
+
+        this.realtimeService!.connect();
+      });
     }
 
     // Subscribe to user events (requires credentials)
+    // Now safe to subscribe since connection is established
     const credentials = this.tradingService.getCredentials();
     if (credentials && this.realtimeService) {
+      console.log(`[OrderManager] Subscribing to user events...`);
       // Map ApiCredentials (key) to ClobApiKeyCreds (apiKey) format
       const clobAuth = {
         apiKey: credentials.key,
@@ -1189,6 +1206,7 @@ export class OrderManager extends EventEmitter {
         onOrder: this.handleUserOrder.bind(this),
         onTrade: this.handleUserTrade.bind(this),
       });
+      console.log(`[OrderManager] User events subscription complete`);
     }
   }
 
@@ -1242,6 +1260,17 @@ export class OrderManager extends EventEmitter {
    * 2. makerOrders[].orderId - if our limit order was matched as maker
    */
   private async handleUserTrade(userTrade: UserTrade): Promise<void> {
+    // Debug: Log all incoming USER_TRADE events
+    console.log(`[OrderManager] WebSocket USER_TRADE received:`, {
+      tradeId: userTrade.tradeId,
+      takerOrderId: userTrade.takerOrderId,
+      makerOrderIds: userTrade.makerOrders?.map(m => m.orderId),
+      size: userTrade.size,
+      price: userTrade.price,
+      status: userTrade.status,
+      watchedOrderCount: this.watchedOrders.size,
+    });
+
     // Find the watched order using takerOrderId or makerOrders
     let watched: WatchedOrder | undefined;
 
@@ -1258,7 +1287,12 @@ export class OrderManager extends EventEmitter {
       }
     }
 
-    if (!watched) return;
+    if (!watched) {
+      console.log(`[OrderManager] USER_TRADE not for any watched order, ignoring`);
+      return;
+    }
+
+    console.log(`[OrderManager] USER_TRADE matched watched order: ${watched.orderId}`);
 
     // Deduplicate events
     const eventKey = `trade_${userTrade.tradeId}_${userTrade.status}_${userTrade.timestamp}`;
