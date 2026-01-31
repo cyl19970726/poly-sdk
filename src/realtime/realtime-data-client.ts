@@ -241,28 +241,71 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
   /**
    * Subscribe to Binance crypto prices
    *
-   * Provides real-time price updates from Binance.
-   * Symbols must be lowercase concatenated format (e.g., 'btcusdt', 'ethusdt').
+   * Provides real-time price updates from Binance exchange.
    *
-   * Format: { action: "subscribe", subscriptions: [{ topic: "crypto_prices", type: "update", filters: "btcusdt,ethusdt" }] }
+   * **Usage:**
+   * ```typescript
+   * const client = new RealTimeDataClient({ url: WS_ENDPOINTS.LIVE_DATA });
+   * client.connect();
+   * client.subscribeCryptoPrices(['btcusdt', 'ethusdt', 'solusdt', 'xrpusdt']);
+   * ```
+   *
+   * **Symbol Format:** Lowercase concatenated pairs (e.g., 'btcusdt', 'ethusdt', 'solusdt', 'xrpusdt')
+   *
+   * **Subscription Message Format:**
+   * ```json
+   * {
+   *   "action": "subscribe",
+   *   "subscriptions": [{
+   *     "topic": "crypto_prices",
+   *     "type": "*",
+   *     "filters": "{\"symbol\":\"btcusdt\"}"
+   *   }]
+   * }
+   * ```
+   *
+   * **Response Message Format:**
+   * ```json
+   * {
+   *   "topic": "crypto_prices",
+   *   "type": "update",
+   *   "timestamp": 1769846473135,
+   *   "payload": {
+   *     "symbol": "ethusdt",
+   *     "timestamp": 1769846473000,
+   *     "value": 2681.42,
+   *     "full_accuracy_value": "2681.42000000"
+   *   }
+   * }
+   * ```
+   *
+   * **Important Notes:**
+   * - Each symbol requires a separate subscription message
+   * - Use `type: "*"` (not `"update"`)
+   * - Filters must be JSON-stringified: `JSON.stringify({ symbol: "btcusdt" })`
+   * - This implementation matches the official @polymarket/real-time-data-client
    *
    * @param symbols - Array of Binance symbols in lowercase (e.g., ['btcusdt', 'ethusdt'])
+   * @see https://docs.polymarket.com/developers/RTDS/RTDS-crypto-prices
+   * @see https://github.com/Polymarket/real-time-data-client
    */
   subscribeCryptoPrices(symbols: string[]): void {
     if (symbols.length === 0) return;
 
-    const msg = {
-      action: 'subscribe',
-      subscriptions: [
-        {
-          topic: 'crypto_prices',
-          type: 'update',
-          filters: symbols.join(','),
-        },
-      ],
-    };
+    for (const symbol of symbols) {
+      const msg = {
+        action: 'subscribe',
+        subscriptions: [
+          {
+            topic: 'crypto_prices',
+            type: '*',
+            filters: JSON.stringify({ symbol }),
+          },
+        ],
+      };
 
-    this.send(JSON.stringify(msg));
+      this.send(JSON.stringify(msg));
+    }
   }
 
   /**
@@ -273,31 +316,73 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
   unsubscribeCryptoPrices(symbols: string[]): void {
     if (symbols.length === 0) return;
 
-    const msg = {
-      action: 'unsubscribe',
-      subscriptions: [
-        {
-          topic: 'crypto_prices',
-          type: 'update',
-          filters: symbols.join(','),
-        },
-      ],
-    };
+    for (const symbol of symbols) {
+      const msg = {
+        action: 'unsubscribe',
+        subscriptions: [
+          {
+            topic: 'crypto_prices',
+            type: '*',
+            filters: JSON.stringify({ symbol }),
+          },
+        ],
+      };
 
-    this.send(JSON.stringify(msg));
+      this.send(JSON.stringify(msg));
+    }
   }
 
   /**
    * Subscribe to Chainlink crypto prices
    *
-   * Provides real-time price updates from Chainlink oracles.
-   * Symbols must be lowercase slash-separated format (e.g., 'btc/usd', 'eth/usd').
+   * Provides real-time price updates from Chainlink oracles (official settlement price source).
    *
-   * Format: { action: "subscribe", subscriptions: [{ topic: "crypto_prices_chainlink", type: "*", filters: "{\"symbol\":\"btc/usd\"}" }] }
+   * **Usage:**
+   * ```typescript
+   * const client = new RealTimeDataClient({ url: WS_ENDPOINTS.LIVE_DATA });
+   * client.connect();
+   * client.subscribeCryptoChainlinkPrices(['btc/usd', 'eth/usd', 'sol/usd', 'xrp/usd']);
+   * ```
    *
-   * Note: Each symbol requires a separate subscription with JSON-stringified filter.
+   * **Symbol Format:** Lowercase slash-separated pairs (e.g., 'btc/usd', 'eth/usd', 'sol/usd', 'xrp/usd')
+   *
+   * **Subscription Message Format:**
+   * ```json
+   * {
+   *   "action": "subscribe",
+   *   "subscriptions": [{
+   *     "topic": "crypto_prices_chainlink",
+   *     "type": "*",
+   *     "filters": "{\"symbol\":\"btc/usd\"}"
+   *   }]
+   * }
+   * ```
+   *
+   * **Response Message Format:**
+   * ```json
+   * {
+   *   "topic": "crypto_prices_chainlink",
+   *   "type": "update",
+   *   "timestamp": 1769833333076,
+   *   "payload": {
+   *     "symbol": "btc/usd",
+   *     "timestamp": 1769833332000,
+   *     "value": 83915.04025109926,
+   *     "full_accuracy_value": "83915040251099250000000"
+   *   }
+   * }
+   * ```
+   *
+   * **Important Notes:**
+   * - Each symbol requires a separate subscription message
+   * - Use `type: "*"` for all message types
+   * - Filters must be JSON-stringified: `JSON.stringify({ symbol: "btc/usd" })`
+   * - Chainlink prices are used as the official settlement source for 15m crypto markets
+   * - Higher precision available via `full_accuracy_value` field
    *
    * @param symbols - Array of Chainlink symbols in lowercase (e.g., ['btc/usd', 'eth/usd'])
+   * @see https://docs.polymarket.com/developers/RTDS/RTDS-crypto-prices
+   * @see https://data.chain.link/streams - Official Chainlink data feeds
    */
   subscribeCryptoChainlinkPrices(symbols: string[]): void {
     if (symbols.length === 0) return;
