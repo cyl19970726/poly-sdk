@@ -183,7 +183,7 @@
 import { EventEmitter } from 'events';
 import { ethers } from 'ethers';
 import { TradingService, type LimitOrderParams, type MarketOrderParams, type Order, type OrderResult } from './trading-service.js';
-import type { RealtimeServiceV2, UserOrder, UserTrade } from './realtime-service-v2.js';
+import type { RealtimeServiceV2, UserOrder, UserTrade, MakerOrderInfo } from './realtime-service-v2.js';
 import { RateLimiter } from '../core/rate-limiter.js';
 import { createUnifiedCache } from '../core/unified-cache.js';
 import type { UnifiedCache } from '../core/unified-cache.js';
@@ -1273,6 +1273,7 @@ export class OrderManager extends EventEmitter {
 
     // Find the watched order using takerOrderId or makerOrders
     let watched: WatchedOrder | undefined;
+    let makerInfo: MakerOrderInfo | undefined;
 
     // Priority 1: Check if we're the taker
     if (userTrade.takerOrderId) {
@@ -1283,7 +1284,10 @@ export class OrderManager extends EventEmitter {
     if (!watched && userTrade.makerOrders) {
       for (const maker of userTrade.makerOrders) {
         watched = this.watchedOrders.get(maker.orderId);
-        if (watched) break;
+        if (watched) {
+          makerInfo = maker;
+          break;
+        }
       }
     }
 
@@ -1294,18 +1298,33 @@ export class OrderManager extends EventEmitter {
 
     console.log(`[OrderManager] USER_TRADE matched watched order: ${watched.orderId}`);
 
+    // Bug 16 Fix: When we're the maker, use maker-specific matchedSize and price
+    // userTrade.size is the TOTAL trade size (sum of all makers), not our individual fill
+    const fillSize = makerInfo?.matchedSize ?? userTrade.size;
+    const fillPrice = makerInfo?.price ?? userTrade.price;
+
+    console.log(`[OrderManager] USER_TRADE fill details:`, {
+      isMaker: !!makerInfo,
+      fillSize,
+      fillPrice,
+      tradeTotalSize: userTrade.size,
+    });
+
     // Deduplicate events
-    const eventKey = `trade_${userTrade.tradeId}_${userTrade.status}_${userTrade.timestamp}`;
+    // When we're maker, include our orderId in the key to handle multiple makers in same trade
+    const eventKey = makerInfo
+      ? `trade_${userTrade.tradeId}_${userTrade.status}_${watched.orderId}`
+      : `trade_${userTrade.tradeId}_${userTrade.status}_${userTrade.timestamp}`;
     if (this.processedEvents.has(eventKey)) return;
     this.processedEvents.add(eventKey);
 
     // Emit fill event
     // Calculate remaining size after this fill
-    const remainingAfterFill = watched.order.originalSize - (watched.order.filledSize + userTrade.size);
+    const remainingAfterFill = watched.order.originalSize - (watched.order.filledSize + fillSize);
     // Complete fill if: sum >= originalSize OR remaining is zero/negative
     // Note: For market orders (FOK/FAK), originalSize is in USDC but filledSize is in shares,
     // causing remainingAfterFill to be negative. This is still a complete fill.
-    const isCompleteFill = watched.order.filledSize + userTrade.size >= watched.order.originalSize ||
+    const isCompleteFill = watched.order.filledSize + fillSize >= watched.order.originalSize ||
       remainingAfterFill <= 0;
 
     const fillEvent: FillEvent = {
@@ -1313,14 +1332,14 @@ export class OrderManager extends EventEmitter {
       order: watched.order,
       fill: {
         tradeId: userTrade.tradeId,
-        size: userTrade.size,
-        price: userTrade.price,
+        size: fillSize,
+        price: fillPrice,
         fee: 0, // Fee info not in UserTrade
         timestamp: userTrade.timestamp,
         transactionHash: userTrade.transactionHash,
       },
-      cumulativeFilled: watched.order.filledSize + userTrade.size,
-      remainingSize: watched.order.originalSize - (watched.order.filledSize + userTrade.size),
+      cumulativeFilled: watched.order.filledSize + fillSize,
+      remainingSize: watched.order.originalSize - (watched.order.filledSize + fillSize),
       isCompleteFill,
     };
 
