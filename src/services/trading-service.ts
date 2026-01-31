@@ -56,13 +56,19 @@ const CLOB_HOST = 'https://clob.polymarket.com';
 // - "invalid amount for a marketable BUY order ($X), min size: $1"
 // - "Size (X) lower than the minimum: 5"
 //
+// NOTE: minimum_order_size is MARKET-SPECIFIC (retrieved via CLOB API):
+// - SOL/BTC/ETH 15-minute markets: 5 shares
+// - Sports markets: 15 shares
+// - Some markets: 0 shares
+// Use LimitOrderParams.minimumOrderSize to pass the market-specific value.
+//
 // Strategies should ensure orders meet these requirements BEFORE sending.
 // ============================================================================
 
 /** Minimum order value in USDC (price * size >= MIN_ORDER_VALUE) */
 export const MIN_ORDER_VALUE_USDC = 1;
 
-/** Minimum order size in shares */
+/** Default minimum order size in shares (fallback if market-specific value not provided) */
 export const MIN_ORDER_SIZE_SHARES = 5;
 
 // ============================================================================
@@ -96,6 +102,8 @@ export interface LimitOrderParams {
   size: number;
   orderType?: 'GTC' | 'GTD';
   expiration?: number;
+  /** Market-specific minimum order size (from CLOB API). Falls back to MIN_ORDER_SIZE_SHARES if not provided. */
+  minimumOrderSize?: number;
 }
 
 export interface MarketOrderParams {
@@ -421,10 +429,12 @@ export class TradingService {
    */
   async createLimitOrder(params: LimitOrderParams): Promise<OrderResult> {
     // Validate minimum order requirements before sending to API
-    if (params.size < MIN_ORDER_SIZE_SHARES) {
+    // Use market-specific minimum if provided, otherwise fall back to global default
+    const minOrderSize = params.minimumOrderSize ?? MIN_ORDER_SIZE_SHARES;
+    if (params.size < minOrderSize) {
       return {
         success: false,
-        errorMsg: `Order size (${params.size}) is below Polymarket minimum (${MIN_ORDER_SIZE_SHARES} shares)`,
+        errorMsg: `Order size (${params.size}) is below Polymarket minimum (${minOrderSize} shares)`,
       };
     }
 
@@ -573,8 +583,10 @@ export class TradingService {
     const validationErrors: string[] = [];
     for (let i = 0; i < orders.length; i++) {
       const order = orders[i];
-      if (order.size < MIN_ORDER_SIZE_SHARES) {
-        validationErrors.push(`Order ${i}: size (${order.size}) below minimum (${MIN_ORDER_SIZE_SHARES} shares)`);
+      // Use market-specific minimum if provided, otherwise fall back to global default
+      const minOrderSize = order.minimumOrderSize ?? MIN_ORDER_SIZE_SHARES;
+      if (order.size < minOrderSize) {
+        validationErrors.push(`Order ${i}: size (${order.size}) below minimum (${minOrderSize} shares)`);
       }
       const orderValue = order.price * order.size;
       if (orderValue < MIN_ORDER_VALUE_USDC) {
