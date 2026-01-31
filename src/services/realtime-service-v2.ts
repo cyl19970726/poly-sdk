@@ -20,6 +20,7 @@ import {
   type ClobApiKeyCreds,
   type RealTimeDataClientInterface,
   ConnectionStatus,
+  WS_ENDPOINTS,
 } from '../realtime/index.js';
 import type { PriceUpdate, BookUpdate, Orderbook, OrderbookLevel } from '../core/types.js';
 
@@ -280,10 +281,13 @@ export interface EquityPriceHandlers {
 
 export class RealtimeServiceV2 extends EventEmitter {
   private client: RealTimeDataClient | null = null;
+  /** Separate client for crypto prices (uses LIVE_DATA endpoint) */
+  private cryptoClient: RealTimeDataClient | null = null;
   private config: RealtimeServiceConfig;
   private subscriptions: Map<string, Subscription> = new Map();
   private subscriptionIdCounter = 0;
   private connected = false;
+  private cryptoConnected = false;
 
   // Subscription refresh timer: re-sends subscriptions shortly after they're added
   // This fixes a bug where initial subscriptions on a fresh connection only receive
@@ -334,6 +338,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       return this;
     }
 
+    // Main client for MARKET/USER channels
     this.client = new RealTimeDataClient({
       onConnect: this.handleConnect.bind(this),
       onMessage: this.handleMessage.bind(this),
@@ -343,7 +348,22 @@ export class RealtimeServiceV2 extends EventEmitter {
       debug: this.config.debug,
     });
 
+    // Crypto client for LIVE_DATA channel (crypto_prices)
+    this.cryptoClient = new RealTimeDataClient({
+      url: WS_ENDPOINTS.LIVE_DATA,
+      onConnect: this.handleCryptoConnect.bind(this),
+      onMessage: this.handleCryptoMessage.bind(this),
+      onStatusChange: (status: ConnectionStatus) => {
+        this.log(`Crypto client status: ${status}`);
+        this.cryptoConnected = status === ConnectionStatus.CONNECTED;
+      },
+      autoReconnect: this.config.autoReconnect,
+      pingInterval: this.config.pingInterval,
+      debug: this.config.debug,
+    });
+
     this.client.connect();
+    this.cryptoClient.connect();
     return this;
   }
 
@@ -353,15 +373,23 @@ export class RealtimeServiceV2 extends EventEmitter {
   disconnect(): void {
     this.cancelSubscriptionRefresh();
     this.cancelMarketSubscriptionBatch();
+
     if (this.client) {
       this.client.disconnect();
       this.client = null;
       this.connected = false;
-      this.subscriptions.clear();
-      this.subscriptionMessages.clear();
-      this.subscriptionGenerations.clear();
-      this.accumulatedMarketTokenIds.clear();
     }
+
+    if (this.cryptoClient) {
+      this.cryptoClient.disconnect();
+      this.cryptoClient = null;
+      this.cryptoConnected = false;
+    }
+
+    this.subscriptions.clear();
+    this.subscriptionMessages.clear();
+    this.subscriptionGenerations.clear();
+    this.accumulatedMarketTokenIds.clear();
   }
 
   private cancelMarketSubscriptionBatch(): void {
@@ -748,21 +776,20 @@ export class RealtimeServiceV2 extends EventEmitter {
   // ============================================================================
 
   /**
-   * Subscribe to crypto price updates
-   * @param symbols - Array of symbols (e.g., ['BTCUSDT', 'ETHUSDT'])
+   * Subscribe to crypto price updates (Binance)
+   *
+   * Uses lowercase symbols: 'btcusdt', 'ethusdt', 'solusdt', 'xrpusdt'
+   *
+   * @param symbols - Array of lowercase Binance symbols (e.g., ['btcusdt', 'ethusdt'])
    * @param handlers - Event handlers
    */
   subscribeCryptoPrices(symbols: string[], handlers: CryptoPriceHandlers = {}): Subscription {
     const subId = `crypto_${++this.subscriptionIdCounter}`;
 
-    // Subscribe to each symbol
-    const subscriptions = symbols.map(symbol => ({
-      topic: 'crypto_prices',
-      type: 'update',
-      filters: JSON.stringify({ symbol }),
-    }));
-
-    this.sendSubscription({ subscriptions });
+    // Use custom RealTimeDataClient method
+    if (this.cryptoClient) {
+      this.cryptoClient.subscribeCryptoPrices(symbols);
+    }
 
     const handler = (price: CryptoPrice) => {
       if (symbols.includes(price.symbol)) {
@@ -777,7 +804,9 @@ export class RealtimeServiceV2 extends EventEmitter {
       type: 'update',
       unsubscribe: () => {
         this.off('cryptoPrice', handler);
-        this.sendUnsubscription({ subscriptions });
+        if (this.cryptoClient) {
+          this.cryptoClient.unsubscribeCryptoPrices(symbols);
+        }
         this.subscriptions.delete(subId);
       },
     };
@@ -788,24 +817,19 @@ export class RealtimeServiceV2 extends EventEmitter {
 
   /**
    * Subscribe to Chainlink crypto prices
-   * @param symbols - Array of symbols (e.g., ['ETH/USD', 'BTC/USD'])
+   *
+   * Uses lowercase slash-separated symbols: 'btc/usd', 'eth/usd', 'sol/usd', 'xrp/usd'
+   *
+   * @param symbols - Array of lowercase Chainlink symbols (e.g., ['btc/usd', 'eth/usd'])
+   * @param handlers - Event handlers
    */
   subscribeCryptoChainlinkPrices(symbols: string[], handlers: CryptoPriceHandlers = {}): Subscription {
     const subId = `crypto_chainlink_${++this.subscriptionIdCounter}`;
 
-    const subscriptions = symbols.map(symbol => ({
-      topic: 'crypto_prices_chainlink',
-      type: 'update',
-      filters: JSON.stringify({ symbol }),
-    }));
-
-    const subMsg = { subscriptions };
-    this.sendSubscription(subMsg);
-    this.subscriptionMessages.set(subId, subMsg);  // Store for reconnection
-    this.subscriptionGenerations.set(subId, this.connectionGeneration);
-
-    // Schedule refresh to ensure we receive updates (not just snapshot)
-    this.scheduleSubscriptionRefresh(subId);
+    // Use custom RealTimeDataClient method
+    if (this.cryptoClient) {
+      this.cryptoClient.subscribeCryptoChainlinkPrices(symbols);
+    }
 
     const handler = (price: CryptoPrice) => {
       if (symbols.includes(price.symbol)) {
@@ -820,9 +844,10 @@ export class RealtimeServiceV2 extends EventEmitter {
       type: 'update',
       unsubscribe: () => {
         this.off('cryptoChainlinkPrice', handler);
-        this.sendUnsubscription({ subscriptions }, subId);
+        if (this.cryptoClient) {
+          this.cryptoClient.unsubscribeCryptoChainlinkPrices(symbols);
+        }
         this.subscriptions.delete(subId);
-        this.subscriptionMessages.delete(subId);  // Remove from reconnection list
       },
     };
 
@@ -1123,6 +1148,31 @@ export class RealtimeServiceV2 extends EventEmitter {
     }
 
     this.emit('statusChange', status);
+  }
+
+  private handleCryptoConnect(_client: RealTimeDataClientInterface): void {
+    this.cryptoConnected = true;
+    this.log('Connected to crypto prices WebSocket');
+    this.emit('cryptoConnected');
+  }
+
+  private handleCryptoMessage(_client: RealTimeDataClientInterface, message: Message): void {
+    this.log(`Crypto received: ${message.topic}:${message.type}`);
+
+    const payload = message.payload as Record<string, unknown>;
+
+    switch (message.topic) {
+      case 'crypto_prices':
+        this.handleCryptoPriceMessage(payload, message.timestamp);
+        break;
+
+      case 'crypto_prices_chainlink':
+        this.handleCryptoChainlinkPriceMessage(payload, message.timestamp);
+        break;
+
+      default:
+        this.log(`Unknown crypto topic: ${message.topic}`);
+    }
   }
 
   private handleMessage(_client: RealTimeDataClientInterface, message: Message): void {

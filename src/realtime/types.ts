@@ -46,6 +46,8 @@ export const WS_ENDPOINTS = {
   MARKET: 'wss://ws-subscriptions-clob.polymarket.com/ws/market',
   /** User channel for authenticated order/trade events */
   USER: 'wss://ws-subscriptions-clob.polymarket.com/ws/user',
+  /** Live data channel for crypto prices and other real-time data */
+  LIVE_DATA: 'wss://ws-live-data.polymarket.com',
 } as const;
 
 // ============================================================================
@@ -366,6 +368,30 @@ export interface OrderEventPayload {
 }
 
 // ============================================================================
+// Crypto Prices (RTDS)
+// @see https://docs.polymarket.com/developers/RTDS/RTDS-crypto-prices
+// ============================================================================
+
+/**
+ * Crypto price update payload
+ * @topic crypto_prices (Binance) or crypto_prices_chainlink (Chainlink)
+ * @trigger Real-time price updates from external data sources
+ */
+export interface CryptoPriceEventPayload {
+  /** Symbol (e.g., 'btcusdt' for Binance, 'btc/usd' for Chainlink) */
+  symbol: string;
+  /** Price value */
+  value: number;
+  /** Price timestamp in milliseconds */
+  timestamp: number;
+}
+
+/**
+ * Crypto price event types
+ */
+export type CryptoPriceEventType = 'update';
+
+// ============================================================================
 // Subscription Messages
 // ============================================================================
 
@@ -438,12 +464,18 @@ export interface DynamicSubscription {
  * |--------|---------------------|------------------------------------------|
  * | trade  | TradeEventPayload   | Trade status (MATCHED/MINED/CONFIRMED)   |
  * | order  | OrderEventPayload   | Order event (PLACEMENT/UPDATE/CANCEL)    |
+ *
+ * ## Crypto Price Messages (topic: 'crypto_prices' | 'crypto_prices_chainlink')
+ *
+ * | Type   | Payload Type            | Description                          |
+ * |--------|-------------------------|--------------------------------------|
+ * | update | CryptoPriceEventPayload | Real-time price from Binance/Chainlink|
  */
 export interface Message {
-  /** Topic of the message: 'clob_market' or 'clob_user' */
-  topic: 'clob_market' | 'clob_user' | string;
-  /** Event type (e.g., book, price_change, order, trade) */
-  type: MarketEventType | UserEventType | string;
+  /** Topic of the message: 'clob_market', 'clob_user', 'crypto_prices', or 'crypto_prices_chainlink' */
+  topic: 'clob_market' | 'clob_user' | 'crypto_prices' | 'crypto_prices_chainlink' | string;
+  /** Event type (e.g., book, price_change, order, trade, update) */
+  type: MarketEventType | UserEventType | CryptoPriceEventType | string;
   /** Message timestamp (Unix ms) */
   timestamp: number;
   /** Raw payload - structure depends on topic/type */
@@ -500,6 +532,14 @@ export interface RealTimeDataClientInterface {
   unsubscribeMarket(assetsIds: string[]): void;
   /** Subscribe to user channel with authentication */
   subscribeUser(auth: ClobApiKeyCreds, markets?: string[]): void;
+  /** Subscribe to Binance crypto prices (lowercase symbols: btcusdt, ethusdt, etc.) */
+  subscribeCryptoPrices(symbols: string[]): void;
+  /** Unsubscribe from Binance crypto prices */
+  unsubscribeCryptoPrices(symbols: string[]): void;
+  /** Subscribe to Chainlink crypto prices (lowercase slash-separated: btc/usd, eth/usd, etc.) */
+  subscribeCryptoChainlinkPrices(symbols: string[]): void;
+  /** Unsubscribe from Chainlink crypto prices */
+  unsubscribeCryptoChainlinkPrices(symbols: string[]): void;
   /** Check if connected */
   isConnected(): boolean;
   /** Get current connection status */

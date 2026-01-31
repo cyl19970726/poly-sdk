@@ -34,6 +34,7 @@ export {
   type Message,
   type MarketEventType,
   type UserEventType,
+  type CryptoPriceEventType,
 } from './types.js';
 
 // Market Channel Event Payloads
@@ -57,4 +58,9 @@ export {
   type TradeEventPayload,
   type AssociatedTrade,
   type OrderEventPayload,
+} from './types.js';
+
+// Crypto Price Event Payloads
+export {
+  type CryptoPriceEventPayload,
 } from './types.js';

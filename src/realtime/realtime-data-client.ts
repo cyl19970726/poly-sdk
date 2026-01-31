@@ -239,6 +239,110 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
   }
 
   /**
+   * Subscribe to Binance crypto prices
+   *
+   * Provides real-time price updates from Binance.
+   * Symbols must be lowercase concatenated format (e.g., 'btcusdt', 'ethusdt').
+   *
+   * Format: { action: "subscribe", subscriptions: [{ topic: "crypto_prices", type: "update", filters: "btcusdt,ethusdt" }] }
+   *
+   * @param symbols - Array of Binance symbols in lowercase (e.g., ['btcusdt', 'ethusdt'])
+   */
+  subscribeCryptoPrices(symbols: string[]): void {
+    if (symbols.length === 0) return;
+
+    const msg = {
+      action: 'subscribe',
+      subscriptions: [
+        {
+          topic: 'crypto_prices',
+          type: 'update',
+          filters: symbols.join(','),
+        },
+      ],
+    };
+
+    this.send(JSON.stringify(msg));
+  }
+
+  /**
+   * Unsubscribe from Binance crypto prices
+   *
+   * @param symbols - Array of Binance symbols to unsubscribe from
+   */
+  unsubscribeCryptoPrices(symbols: string[]): void {
+    if (symbols.length === 0) return;
+
+    const msg = {
+      action: 'unsubscribe',
+      subscriptions: [
+        {
+          topic: 'crypto_prices',
+          type: 'update',
+          filters: symbols.join(','),
+        },
+      ],
+    };
+
+    this.send(JSON.stringify(msg));
+  }
+
+  /**
+   * Subscribe to Chainlink crypto prices
+   *
+   * Provides real-time price updates from Chainlink oracles.
+   * Symbols must be lowercase slash-separated format (e.g., 'btc/usd', 'eth/usd').
+   *
+   * Format: { action: "subscribe", subscriptions: [{ topic: "crypto_prices_chainlink", type: "*", filters: "{\"symbol\":\"btc/usd\"}" }] }
+   *
+   * Note: Each symbol requires a separate subscription with JSON-stringified filter.
+   *
+   * @param symbols - Array of Chainlink symbols in lowercase (e.g., ['btc/usd', 'eth/usd'])
+   */
+  subscribeCryptoChainlinkPrices(symbols: string[]): void {
+    if (symbols.length === 0) return;
+
+    for (const symbol of symbols) {
+      const msg = {
+        action: 'subscribe',
+        subscriptions: [
+          {
+            topic: 'crypto_prices_chainlink',
+            type: '*',
+            filters: JSON.stringify({ symbol }),
+          },
+        ],
+      };
+
+      this.send(JSON.stringify(msg));
+    }
+  }
+
+  /**
+   * Unsubscribe from Chainlink crypto prices
+   *
+   * @param symbols - Array of Chainlink symbols to unsubscribe from
+   */
+  unsubscribeCryptoChainlinkPrices(symbols: string[]): void {
+    if (symbols.length === 0) return;
+
+    for (const symbol of symbols) {
+      const msg = {
+        action: 'unsubscribe',
+        subscriptions: [
+          {
+            topic: 'crypto_prices_chainlink',
+            type: '*',
+            filters: JSON.stringify({ symbol }),
+          },
+        ],
+      };
+
+      this.send(JSON.stringify(msg));
+    }
+  }
+
+  /**
    * Check if connected
    */
   isConnected(): boolean {
@@ -456,6 +560,25 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
           type: 'book',
           timestamp,
           payload: obj,
+        });
+        return messages;
+      }
+
+      // ----------------------------------------------------------------------
+      // Crypto Price Events (topic: crypto_prices or crypto_prices_chainlink)
+      // @see https://docs.polymarket.com/developers/RTDS/RTDS-crypto-prices
+      // ----------------------------------------------------------------------
+
+      // crypto_prices or crypto_prices_chainlink: Real-time price updates
+      if (obj.topic === 'crypto_prices' || obj.topic === 'crypto_prices_chainlink') {
+        const payload = obj.payload as Record<string, unknown>;
+        const priceTimestamp = this.normalizeTimestamp(payload?.timestamp) || timestamp;
+
+        messages.push({
+          topic: obj.topic as 'crypto_prices' | 'crypto_prices_chainlink',
+          type: (obj.type as string) || 'update',
+          timestamp: priceTimestamp,
+          payload: payload || obj,
         });
         return messages;
       }
