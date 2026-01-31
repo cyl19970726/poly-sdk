@@ -1570,6 +1570,14 @@ export class RealtimeServiceV2 extends EventEmitter {
 
   private sendSubscription(msg: { subscriptions: Array<{ topic: string; type: string; filters?: string; clob_auth?: ClobApiKeyCreds }> }): void {
     if (this.client && this.connected) {
+      // Log subscription details (redact credentials)
+      const loggableSubs = msg.subscriptions.map(s => ({
+        topic: s.topic,
+        type: s.type,
+        filters: s.filters,
+        hasAuth: !!s.clob_auth,
+      }));
+      this.log(`Sending subscription: ${JSON.stringify(loggableSubs)}`);
       this.client.subscribe(msg);
     } else {
       this.log('Cannot subscribe: not connected');
