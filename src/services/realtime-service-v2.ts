@@ -281,12 +281,15 @@ export interface EquityPriceHandlers {
 
 export class RealtimeServiceV2 extends EventEmitter {
   private client: RealTimeDataClient | null = null;
+  /** Separate client for user channel (uses USER endpoint) */
+  private userClient: RealTimeDataClient | null = null;
   /** Separate client for crypto prices (uses LIVE_DATA endpoint) */
   private cryptoClient: RealTimeDataClient | null = null;
   private config: RealtimeServiceConfig;
   private subscriptions: Map<string, Subscription> = new Map();
   private subscriptionIdCounter = 0;
   private connected = false;
+  private userConnected = false;
   private cryptoConnected = false;
 
   // Subscription refresh timer: re-sends subscriptions shortly after they're added
@@ -304,6 +307,9 @@ export class RealtimeServiceV2 extends EventEmitter {
 
   // Store subscription messages for reconnection
   private subscriptionMessages: Map<string, { subscriptions: Array<{ topic: string; type: string; filters?: string; clob_auth?: ClobApiKeyCreds }> }> = new Map();
+
+  // Store user credentials for reconnection
+  private userCredentials: ClobApiKeyCreds | null = null;
 
   // Accumulated market token IDs - we merge all markets into a single subscription
   // to avoid server overwriting previous subscriptions with same topic+type
@@ -348,6 +354,20 @@ export class RealtimeServiceV2 extends EventEmitter {
       debug: this.config.debug,
     });
 
+    // User client for USER channel (clob_user events)
+    this.userClient = new RealTimeDataClient({
+      url: WS_ENDPOINTS.USER,
+      onConnect: this.handleUserConnect.bind(this),
+      onMessage: this.handleUserChannelMessage.bind(this),
+      onStatusChange: (status: ConnectionStatus) => {
+        this.log(`User client status: ${status}`);
+        this.userConnected = status === ConnectionStatus.CONNECTED;
+      },
+      autoReconnect: this.config.autoReconnect,
+      pingInterval: this.config.pingInterval,
+      debug: this.config.debug,
+    });
+
     // Crypto client for LIVE_DATA channel (crypto_prices)
     this.cryptoClient = new RealTimeDataClient({
       url: WS_ENDPOINTS.LIVE_DATA,
@@ -363,6 +383,7 @@ export class RealtimeServiceV2 extends EventEmitter {
     });
 
     this.client.connect();
+    this.userClient.connect();
     this.cryptoClient.connect();
     return this;
   }
@@ -380,6 +401,12 @@ export class RealtimeServiceV2 extends EventEmitter {
       this.connected = false;
     }
 
+    if (this.userClient) {
+      this.userClient.disconnect();
+      this.userClient = null;
+      this.userConnected = false;
+    }
+
     if (this.cryptoClient) {
       this.cryptoClient.disconnect();
       this.cryptoClient = null;
@@ -390,6 +417,7 @@ export class RealtimeServiceV2 extends EventEmitter {
     this.subscriptionMessages.clear();
     this.subscriptionGenerations.clear();
     this.accumulatedMarketTokenIds.clear();
+    this.userCredentials = null;
   }
 
   private cancelMarketSubscriptionBatch(): void {
@@ -675,22 +703,26 @@ export class RealtimeServiceV2 extends EventEmitter {
 
   /**
    * Subscribe to user order and trade events
+   *
+   * User channel requires a separate WebSocket endpoint (USER endpoint).
+   * Subscription format: { type: 'USER', auth: { apiKey, secret, passphrase } }
+   *
    * @param credentials - CLOB API credentials
    * @param handlers - Event handlers
    */
   subscribeUserEvents(credentials: ClobApiKeyCreds, handlers: UserDataHandlers = {}): Subscription {
     const subId = `user_${++this.subscriptionIdCounter}`;
 
-    const subscriptions = [
-      { topic: 'clob_user', type: '*', clob_auth: credentials },
-    ];
+    // Store credentials for reconnection
+    this.userCredentials = credentials;
 
-    const subMsg = { subscriptions };
-    this.sendSubscription(subMsg);
-
-    // Store for reconnection - critical for receiving USER_TRADE events after reconnect
-    this.subscriptionMessages.set(subId, subMsg);
-    this.subscriptionGenerations.set(subId, this.connectionGeneration);
+    // Send subscription using the user client
+    if (this.userClient && this.userConnected) {
+      this.log('Sending user subscription via user client');
+      this.userClient.subscribeUser(credentials);
+    } else {
+      this.log('User client not connected, will subscribe on connect');
+    }
 
     const orderHandler = (order: UserOrder) => handlers.onOrder?.(order);
     const tradeHandler = (trade: UserTrade) => handlers.onTrade?.(trade);
@@ -705,10 +737,8 @@ export class RealtimeServiceV2 extends EventEmitter {
       unsubscribe: () => {
         this.off('userOrder', orderHandler);
         this.off('userTrade', tradeHandler);
-        this.sendUnsubscription({ subscriptions }, subId);
+        this.userCredentials = null;
         this.subscriptions.delete(subId);
-        this.subscriptionMessages.delete(subId);
-        this.subscriptionGenerations.delete(subId);
       },
     };
 
@@ -1155,6 +1185,35 @@ export class RealtimeServiceV2 extends EventEmitter {
     }
 
     this.emit('statusChange', status);
+  }
+
+  private handleUserConnect(_client: RealTimeDataClientInterface): void {
+    this.userConnected = true;
+    this.log('Connected to user channel WebSocket');
+
+    // Re-subscribe with stored credentials if available
+    if (this.userCredentials) {
+      this.log('Re-subscribing to user events with stored credentials');
+      setTimeout(() => {
+        if (this.userClient && this.userConnected && this.userCredentials) {
+          this.userClient.subscribeUser(this.userCredentials);
+        }
+      }, 1000);
+    }
+
+    this.emit('userConnected');
+  }
+
+  private handleUserChannelMessage(_client: RealTimeDataClientInterface, message: Message): void {
+    this.log(`User channel received: ${message.topic}:${message.type}`);
+
+    const payload = message.payload as Record<string, unknown>;
+
+    if (message.topic === 'clob_user') {
+      this.handleUserMessage(message.type, payload, message.timestamp);
+    } else {
+      this.log(`Unexpected topic on user channel: ${message.topic}`);
+    }
   }
 
   private handleCryptoConnect(_client: RealTimeDataClientInterface): void {

@@ -30,4 +30,41 @@
 - `src/clients/`：纯 API client（请求/响应/分页/参数）
 - `src/services/`：组合逻辑（可依赖多个 client）
 - `src/core/`：错误、限流、缓存、基础 types
+- `src/realtime/`：WebSocket 客户端实现（RealTimeDataClient）
+- `scripts/`：本地测试脚本（不提交）
+
+## WebSocket 测试
+
+修改 RealtimeServiceV2 后必须验证 WebSocket 功能正常：
+
+```bash
+cd poly-sdk
+PRIVATE_KEY=0x... npx tsx scripts/test-websocket-subscription.ts
+```
+
+**预期输出**:
+```
+✓ Market channel connected
+✓ User channel connected
+✓ USER_ORDER #1 received: { eventType: 'PLACEMENT', ... }
+✓ USER_ORDER #2 received: { eventType: 'CANCELLATION', ... }
+✓ WebSocket subscription is working!
+```
+
+**关键验证点**:
+1. Market 和 User channel 都成功连接
+2. 订阅发送后收到 USER_ORDER 事件
+3. 测试脚本退出码为 0
+
+## WebSocket 端点架构
+
+Polymarket 使用三个独立的 WebSocket 端点：
+
+| 端点 | URL | 用途 |
+|------|-----|------|
+| MARKET | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | orderbook, trades, price changes |
+| USER | `wss://ws-subscriptions-clob.polymarket.com/ws/user` | 用户订单/成交事件 (需认证) |
+| LIVE_DATA | `wss://ws-live-data.polymarket.com` | 加密货币价格 |
+
+**重要**: USER 事件必须连接 `/ws/user` 端点，不能在 `/ws/market` 上订阅！
 
