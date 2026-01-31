@@ -915,6 +915,25 @@ export class OrderManager extends EventEmitter {
   }
 
   /**
+   * Cancel all open orders for this wallet.
+   * Useful for cleanup on strategy shutdown.
+   */
+  async cancelAllOrders(): Promise<OrderResult> {
+    this.ensureInitialized();
+
+    const result = await this.tradingService.cancelAllOrders();
+
+    if (result.success) {
+      // Unwatch all orders
+      for (const orderId of this.watchedOrders.keys()) {
+        this.unwatchOrder(orderId);
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Get order details
    * Fetches from TradingService (CLOB API)
    */
