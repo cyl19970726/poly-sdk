@@ -705,6 +705,12 @@ export class TradingService {
         const order = await client.getOrder(orderId);
         if (!order) return null;
 
+        // Validate required fields to prevent runtime errors
+        if (!order.side) {
+          console.warn(`[TradingService] Order ${orderId} missing side field, returning null`);
+          return null;
+        }
+
         const originalSize = Number(order.original_size) || 0;
         const filledSize = Number(order.size_matched) || 0;
         return {
