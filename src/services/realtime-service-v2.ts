@@ -685,7 +685,12 @@ export class RealtimeServiceV2 extends EventEmitter {
       { topic: 'clob_user', type: '*', clob_auth: credentials },
     ];
 
-    this.sendSubscription({ subscriptions });
+    const subMsg = { subscriptions };
+    this.sendSubscription(subMsg);
+
+    // Store for reconnection - critical for receiving USER_TRADE events after reconnect
+    this.subscriptionMessages.set(subId, subMsg);
+    this.subscriptionGenerations.set(subId, this.connectionGeneration);
 
     const orderHandler = (order: UserOrder) => handlers.onOrder?.(order);
     const tradeHandler = (trade: UserTrade) => handlers.onTrade?.(trade);
@@ -700,8 +705,10 @@ export class RealtimeServiceV2 extends EventEmitter {
       unsubscribe: () => {
         this.off('userOrder', orderHandler);
         this.off('userTrade', tradeHandler);
-        this.sendUnsubscription({ subscriptions });
+        this.sendUnsubscription({ subscriptions }, subId);
         this.subscriptions.delete(subId);
+        this.subscriptionMessages.delete(subId);
+        this.subscriptionGenerations.delete(subId);
       },
     };
 
