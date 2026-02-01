@@ -1191,23 +1191,11 @@ export class OrderManager extends EventEmitter {
     this.realtimeService = new RealtimeServiceV2({ autoReconnect: true });
 
     // Connect to WebSocket and wait for connection to be established
-    // This fixes a race condition where subscribeUserEvents() was called
-    // before the connection was ready, causing subscriptions to be silently dropped
+    // connect() is async and returns a Promise that resolves when connected
     if (this.realtimeService) {
       console.log(`[OrderManager] Connecting to WebSocket...`);
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('WebSocket connection timeout (10s)'));
-        }, 10_000);
-
-        this.realtimeService!.once('connected', () => {
-          clearTimeout(timeout);
-          console.log(`[OrderManager] WebSocket connected successfully`);
-          resolve();
-        });
-
-        this.realtimeService!.connect();
-      });
+      await this.realtimeService.connect();
+      console.log(`[OrderManager] WebSocket connected successfully`);
     }
 
     // Subscribe to user events (requires credentials)

@@ -323,28 +323,9 @@ export class DipArbService extends EventEmitter {
     }
 
     // Connect realtime service and wait for connection
-    this.realtimeService.connect();
-
-    // Wait for WebSocket connection (with timeout)
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        this.log('Warning: WebSocket connection timeout, proceeding anyway');
-        resolve();
-      }, 10000);
-
-      // Check if already connected
-      if (this.realtimeService.isConnected?.()) {
-        clearTimeout(timeout);
-        resolve();
-        return;
-      }
-
-      this.realtimeService.once('connected', () => {
-        clearTimeout(timeout);
-        this.log('WebSocket connected');
-        resolve();
-      });
-    });
+    // connect() is async and returns a Promise that resolves when connected
+    await this.realtimeService.connect();
+    this.log('WebSocket connected');
 
     // Subscribe to market orderbook
     this.log(`Subscribing to tokens: UP=${market.upTokenId.slice(0, 20)}..., DOWN=${market.downTokenId.slice(0, 20)}...`);

@@ -386,7 +386,8 @@ export class ArbitrageService extends EventEmitter {
     }
 
     // Connect and subscribe to WebSocket
-    this.realtimeService.connect();
+    // connect() is async and returns a Promise that resolves when connected
+    await this.realtimeService.connect();
     this.marketSubscription = this.realtimeService.subscribeMarkets(
       [market.yesTokenId, market.noTokenId],
       {

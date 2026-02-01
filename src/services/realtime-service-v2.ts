@@ -353,9 +353,19 @@ export class RealtimeServiceV2 extends EventEmitter {
       return;
     }
 
-    // Promise to track when main client connects
-    const connectPromise = new Promise<void>((resolve) => {
+    // Promises to track when all clients connect
+    const mainConnectPromise = new Promise<void>((resolve) => {
       this.connectResolve = resolve;
+    });
+
+    let userConnectResolve: () => void;
+    const userConnectPromise = new Promise<void>((resolve) => {
+      userConnectResolve = resolve;
+    });
+
+    let cryptoConnectResolve: () => void;
+    const cryptoConnectPromise = new Promise<void>((resolve) => {
+      cryptoConnectResolve = resolve;
     });
 
     // Main client for MARKET/USER channels
@@ -371,7 +381,10 @@ export class RealtimeServiceV2 extends EventEmitter {
     // User client for USER channel (clob_user events)
     this.userClient = new RealTimeDataClient({
       url: WS_ENDPOINTS.USER,
-      onConnect: this.handleUserConnect.bind(this),
+      onConnect: (client) => {
+        this.handleUserConnect(client);
+        userConnectResolve!();
+      },
       onMessage: this.handleUserChannelMessage.bind(this),
       onStatusChange: (status: ConnectionStatus) => {
         this.log(`User client status: ${status}`);
@@ -385,7 +398,10 @@ export class RealtimeServiceV2 extends EventEmitter {
     // Crypto client for LIVE_DATA channel (crypto_prices)
     this.cryptoClient = new RealTimeDataClient({
       url: WS_ENDPOINTS.LIVE_DATA,
-      onConnect: this.handleCryptoConnect.bind(this),
+      onConnect: (client) => {
+        this.handleCryptoConnect(client);
+        cryptoConnectResolve!();
+      },
       onMessage: this.handleCryptoMessage.bind(this),
       onStatusChange: (status: ConnectionStatus) => {
         this.log(`Crypto client status: ${status}`);
@@ -400,9 +416,31 @@ export class RealtimeServiceV2 extends EventEmitter {
     this.userClient.connect();
     this.cryptoClient.connect();
 
-    // Wait for main client to connect
-    await connectPromise;
-    this.log('Main WebSocket connected, ready to subscribe');
+    // Wait for all clients to connect (with timeout)
+    const timeout = 10_000;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('WebSocket connection timeout (10s)')), timeout);
+    });
+
+    try {
+      await Promise.race([
+        Promise.all([mainConnectPromise, userConnectPromise, cryptoConnectPromise]),
+        timeoutPromise,
+      ]);
+      this.log('All WebSocket clients connected, ready to subscribe');
+    } catch (error) {
+      // If timeout, check which clients connected
+      const status = {
+        main: this.connected,
+        user: this.userConnected,
+        crypto: this.cryptoConnected,
+      };
+      this.log(`WebSocket connection warning: ${error}. Status: ${JSON.stringify(status)}`);
+      // Continue anyway if main client is connected (minimum required)
+      if (!this.connected) {
+        throw error;
+      }
+    }
   }
 
   /**
