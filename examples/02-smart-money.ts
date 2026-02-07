@@ -19,20 +19,21 @@ async function main() {
 
   // 1. Get leaderboard
   console.log('1. Fetching leaderboard (top 10)...');
-  const leaderboard = await sdk.dataApi.getLeaderboard({ limit: 10 });
-  console.log(`   Total entries: ${leaderboard.total}`);
+  const leaderboard = await sdk.wallets.getTopTraders(10);
+  console.log(`   Found ${leaderboard.length} top traders`);
   console.log('   Top 10 traders:\n');
 
-  for (const entry of leaderboard.entries.slice(0, 10)) {
+  for (const entry of leaderboard.slice(0, 10)) {
     console.log(`   #${entry.rank} ${entry.address.slice(0, 8)}...${entry.address.slice(-6)}`);
     console.log(`       PnL: $${entry.pnl.toLocaleString()}`);
     console.log(`       Volume: $${entry.volume.toLocaleString()}`);
-    console.log(`       Positions: ${entry.positions}, Trades: ${entry.trades}`);
+    if (entry.positions) console.log(`       Positions: ${entry.positions}`);
+    if (entry.trades) console.log(`       Trades: ${entry.trades}`);
   }
 
   // 2. Get wallet positions for top trader
-  if (leaderboard.entries.length > 0) {
-    const topTrader = leaderboard.entries[0].address;
+  if (leaderboard.length > 0) {
+    const topTrader = leaderboard[0].address;
     console.log(`\n2. Getting positions for top trader: ${topTrader.slice(0, 8)}...`);
 
     const positions = await sdk.dataApi.getPositions(topTrader);
