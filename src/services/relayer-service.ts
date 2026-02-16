@@ -43,6 +43,8 @@ export interface RelayerServiceConfig {
   privateKey: string;
   /** Chain ID (default: 137 for Polygon) */
   chainId?: number;
+  /** RPC URL for the provider (default: from POLYGON_RPC_URL env or polygon-rpc.com) */
+  rpcUrl?: string;
   /** Relayer endpoint URL */
   relayerUrl?: string;
 }
@@ -95,7 +97,9 @@ export class RelayerService {
 
   constructor(config: RelayerServiceConfig) {
     this.chainId = config.chainId || 137;
-    this.wallet = new Wallet(config.privateKey);
+    const rpcUrl = config.rpcUrl ?? process.env.POLYGON_RPC_URL ?? 'https://polygon-rpc.com';
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    this.wallet = new Wallet(config.privateKey, provider);
 
     const relayerUrl = config.relayerUrl || 'https://relayer-v2.polymarket.com/';
 
@@ -127,21 +131,58 @@ export class RelayerService {
   }
 
   /**
-   * Deploy a Gnosis Safe smart contract wallet
+   * Get the deterministic Safe address for this EOA (without deploying)
    *
-   * The Safe becomes the asset holder for CTF operations.
+   * Uses the same CREATE2 derivation as the Relayer to compute the Safe address.
+   */
+  async getSafeAddress(): Promise<string> {
+    // Access the contract config from RelayClient (it's a public readonly field)
+    const safeFactory = (this.relayClient as any).contractConfig?.SafeContracts?.SafeFactory;
+    if (!safeFactory) {
+      throw new Error('Cannot derive Safe address: SafeFactory not found in contract config');
+    }
+
+    // SAFE_INIT_CODE_HASH from @polymarket/builder-relayer-client/constants
+    const SAFE_INIT_CODE_HASH = '0x2bce2127ff07fb632d16c8347c4ebf501f4841168bed00d9e6ef715ddb6fcecf';
+
+    // Replicate viem's encodeAbiParameters + keccak256 with ethers
+    const salt = ethers.utils.keccak256(
+      ethers.utils.defaultAbiCoder.encode(['address'], [this.wallet.address])
+    );
+
+    return ethers.utils.getCreate2Address(safeFactory, salt, SAFE_INIT_CODE_HASH);
+  }
+
+  /**
+   * Check if the Safe is already deployed
+   */
+  async isDeployed(): Promise<boolean> {
+    const safe = await this.getSafeAddress();
+    return this.relayClient.getDeployed(safe);
+  }
+
+  /**
+   * Deploy a Gnosis Safe smart contract wallet (idempotent)
+   *
+   * If the Safe is already deployed, returns the existing Safe address.
    * Safe owner is the EOA (this.wallet.address).
    *
    * @returns SafeDeployResult with deployed Safe address
-   *
-   * @example
-   * ```typescript
-   * const result = await relayer.deploySafe();
-   * console.log(`Safe deployed: ${result.safeAddress}`);
-   * ```
    */
   async deploySafe(): Promise<SafeDeployResult> {
     try {
+      // Check if already deployed
+      const expectedSafe = await this.getSafeAddress();
+      const deployed = await this.relayClient.getDeployed(expectedSafe);
+
+      if (deployed) {
+        return {
+          success: true,
+          safeAddress: expectedSafe,
+          txHash: undefined,
+        };
+      }
+
       const response = await this.relayClient.deploy();
 
       // Wait for confirmation
@@ -163,19 +204,9 @@ export class RelayerService {
         };
       }
 
-      // Safe address should be in tx.to for safe deployments
-      const safeAddress = tx.to;
-      if (!safeAddress) {
-        return {
-          success: false,
-          safeAddress: '',
-          errorMessage: 'Safe address not found in transaction',
-        };
-      }
-
       return {
         success: true,
-        safeAddress,
+        safeAddress: expectedSafe,
         txHash: tx.transactionHash,
       };
     } catch (error) {
