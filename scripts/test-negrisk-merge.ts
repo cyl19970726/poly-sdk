@@ -1,9 +1,10 @@
 #!/usr/bin/env npx tsx
 /**
- * E2E Test: NegRisk Merge via Adapter
+ * E2E Test: Merge via CTFClient (Standard + NegRisk)
  *
- * Tests that mergeByTokenIds correctly uses the NegRisk Adapter
- * for NegRisk markets (where CLOB token IDs ≠ calculated position IDs).
+ * Tests mergeByTokenIds for both standard CTF and NegRisk markets.
+ * Queries the CLOB API to determine if the market is NegRisk,
+ * then passes the flag explicitly.
  *
  * Usage (with wallet system):
  *   WALLET_ADDRESS=0x752901... npx tsx scripts/test-negrisk-merge.ts
@@ -16,19 +17,18 @@
  *   - WALLET_ENCRYPTION_KEY (when using WALLET_ADDRESS)
  *
  * Test flow:
- *   1. Check balance at CLOB token IDs
- *   2. Check balance at calculated position IDs (should differ for NegRisk)
- *   3. Merge small amount via mergeByTokenIds (uses NegRisk Adapter automatically)
+ *   1. Query CLOB API to determine neg_risk flag
+ *   2. Check balance at CLOB token IDs
+ *   3. Merge small amount via mergeByTokenIds (passes isNegRisk explicitly)
  *   4. Verify balance decreased and USDC increased
  */
 
 import { CTFClient } from '../src/clients/ctf-client.js';
-import { ethers } from 'ethers';
 import { resolve } from 'node:path';
 
 // ======= Configuration =======
 
-// Monoline FUT vs PV market (NegRisk)
+// Monoline FUT vs PV market (standard CTF, neg_risk=false)
 const CONDITION_ID = '0x6498159d253a7f5c305264d0b68ca53bd8e30f9bd451a617d1bbc483b5b6f10a';
 const TOKEN_IDS = {
   yesTokenId: '96604699770614701613304832744987771366565286043892398776344969979961648002024',
@@ -37,6 +37,24 @@ const TOKEN_IDS = {
 
 // Small test amount — will be capped by min(YES, NO) balance
 const TEST_AMOUNT = '0.5';
+
+async function queryNegRisk(tokenId: string): Promise<boolean> {
+  try {
+    const url = `https://clob.polymarket.com/markets/${tokenId}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      console.warn(`CLOB API returned ${resp.status}, assuming neg_risk=false`);
+      return false;
+    }
+    const data = await resp.json();
+    const negRisk = data.neg_risk === true;
+    console.log(`CLOB API neg_risk: ${negRisk} (condition: ${data.condition_id?.slice(0, 20)}...)`);
+    return negRisk;
+  } catch (error: any) {
+    console.warn(`Failed to query CLOB API: ${error.message}, assuming neg_risk=false`);
+    return false;
+  }
+}
 
 async function resolveKey(): Promise<string> {
   // Option 1: Direct PRIVATE_KEY
@@ -75,37 +93,26 @@ async function main() {
   const rpcUrl = process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com';
   const privateKey = await resolveKey();
 
-  console.log('=== NegRisk Merge E2E Test ===\n');
+  console.log('=== CTF Merge E2E Test ===\n');
+
+  // Step 1: Query CLOB API for neg_risk flag
+  const isNegRisk = await queryNegRisk(TOKEN_IDS.yesTokenId);
 
   const ctf = new CTFClient({ privateKey, rpcUrl });
   const address = ctf.getAddress();
   console.log(`Wallet: ${address}`);
 
-  // Step 1: Check USDC balance
+  // Step 2: Check USDC balance
   const usdcBefore = await ctf.getUsdcBalance();
   console.log(`USDC.e balance: ${usdcBefore}`);
 
-  // Step 2: Check token balance at CLOB token IDs
+  // Step 3: Check token balance at CLOB token IDs
   const clobBalances = await ctf.getPositionBalanceByTokenIds(CONDITION_ID, TOKEN_IDS);
   console.log(`\nCLOB token balances:`);
   console.log(`  YES (${TOKEN_IDS.yesTokenId.slice(0, 10)}...): ${clobBalances.yesBalance}`);
   console.log(`  NO  (${TOKEN_IDS.noTokenId.slice(0, 10)}...): ${clobBalances.noBalance}`);
 
-  // Step 3: Check token balance at calculated position IDs (for comparison)
-  const calcBalances = await ctf.getPositionBalance(CONDITION_ID);
-  console.log(`\nCalculated position balances:`);
-  console.log(`  YES (${calcBalances.yesPositionId.slice(0, 10)}...): ${calcBalances.yesBalance}`);
-  console.log(`  NO  (${calcBalances.noPositionId.slice(0, 10)}...): ${calcBalances.noBalance}`);
-
-  // Step 4: NegRisk detection
-  const clobYes = TOKEN_IDS.yesTokenId;
-  const calcYes = ethers.BigNumber.from(calcBalances.yesPositionId).toString();
-  const isNegRisk = clobYes !== calcYes;
-  console.log(`\nNegRisk detected: ${isNegRisk}`);
-  console.log(`  CLOB YES ID: ${clobYes.slice(0, 20)}...`);
-  console.log(`  Calc YES ID: ${calcYes.slice(0, 20)}...`);
-
-  // Step 5: Determine merge amount (min of YES, NO, TEST_AMOUNT)
+  // Step 4: Determine merge amount (min of YES, NO, TEST_AMOUNT)
   const yesBalance = parseFloat(clobBalances.yesBalance);
   const noBalance = parseFloat(clobBalances.noBalance);
   const pairable = Math.min(yesBalance, noBalance);
@@ -116,11 +123,11 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 6: Merge via mergeByTokenIds
+  // Step 5: Merge via mergeByTokenIds with explicit isNegRisk
   const mergeStr = mergeAmount.toFixed(6);
   console.log(`\n--- Merging ${mergeStr} tokens via mergeByTokenIds (negRisk: ${isNegRisk}) ---`);
   try {
-    const result = await ctf.mergeByTokenIds(CONDITION_ID, TOKEN_IDS, mergeStr);
+    const result = await ctf.mergeByTokenIds(CONDITION_ID, TOKEN_IDS, mergeStr, isNegRisk);
     console.log(`\u2705 Merge succeeded!`);
     console.log(`  TX: ${result.txHash}`);
     console.log(`  Amount: ${result.amount}`);
@@ -131,7 +138,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 7: Verify balance changes
+  // Step 6: Verify balance changes
   const usdcAfter = await ctf.getUsdcBalance();
   const clobBalancesAfter = await ctf.getPositionBalanceByTokenIds(CONDITION_ID, TOKEN_IDS);
 
@@ -142,7 +149,7 @@ async function main() {
 
   const usdcDiff = parseFloat(usdcAfter) - parseFloat(usdcBefore);
   if (usdcDiff >= mergeAmount * 0.99) {
-    console.log(`\n\u2705 E2E test PASSED \u2014 NegRisk merge via adapter works!`);
+    console.log(`\n\u2705 E2E test PASSED — merge works correctly!`);
   } else {
     console.log(`\n\u26A0\uFE0F  USDC increase (${usdcDiff.toFixed(6)}) less than expected (${mergeStr})`);
   }

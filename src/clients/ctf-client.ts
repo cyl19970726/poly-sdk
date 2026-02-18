@@ -377,15 +377,16 @@ export class CTFClient {
    * Split USDC into YES + NO tokens using explicit token IDs
    *
    * Supports both standard CTF and NegRisk markets:
-   * - Standard: uses CTF contract → tokens at calculated position IDs
-   * - NegRisk: uses NegRisk Adapter → tokens at CLOB token IDs
+   * - Standard: uses CTF contract directly
+   * - NegRisk: uses NegRisk Adapter (wraps CTF with wrapped collateral)
    *
-   * @param conditionId - Market condition ID
-   * @param tokenIds - Token IDs from CLOB API (used to detect NegRisk)
+   * @param conditionId - Market condition ID (from CLOB API)
+   * @param tokenIds - Token IDs from CLOB API
    * @param amount - USDC amount (e.g., "100" for 100 USDC)
+   * @param isNegRisk - Whether this market uses NegRisk (from CLOB API neg_risk field)
    * @returns SplitResult with transaction details
    */
-  async splitByTokenIds(conditionId: string, tokenIds: TokenIds, amount: string): Promise<SplitResult> {
+  async splitByTokenIds(conditionId: string, tokenIds: TokenIds, amount: string, isNegRisk = false): Promise<SplitResult> {
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
 
     const balance = await this.usdcContract.balanceOf(this.wallet.address);
@@ -393,7 +394,6 @@ export class CTFClient {
       throw new Error(`Insufficient USDC balance. Have: ${ethers.utils.formatUnits(balance, USDC_DECIMALS)}, Need: ${amount}`);
     }
 
-    const isNegRisk = this.isNegRiskMarket(conditionId, tokenIds);
     const targetContract = isNegRisk ? NEG_RISK_ADAPTER : CTF_CONTRACT;
     const splitContract = isNegRisk ? this.negRiskAdapterContract : this.ctfContract;
 
@@ -508,15 +508,16 @@ export class CTFClient {
    * Merge YES and NO tokens back into USDC using explicit token IDs
    *
    * Supports both standard CTF and NegRisk markets:
-   * - Standard: CLOB token IDs = calculated position IDs → uses CTF contract
-   * - NegRisk: CLOB token IDs ≠ calculated position IDs → uses NegRisk Adapter
+   * - Standard: uses CTF contract directly
+   * - NegRisk: uses NegRisk Adapter (wraps CTF with wrapped collateral)
    *
-   * @param conditionId - Market condition ID
+   * @param conditionId - Market condition ID (from CLOB API)
    * @param tokenIds - Token IDs from CLOB API
    * @param amount - Amount of tokens to merge
+   * @param isNegRisk - Whether this market uses NegRisk (from CLOB API neg_risk field)
    * @returns MergeResult with transaction details
    */
-  async mergeByTokenIds(conditionId: string, tokenIds: TokenIds, amount: string): Promise<MergeResult> {
+  async mergeByTokenIds(conditionId: string, tokenIds: TokenIds, amount: string, isNegRisk = false): Promise<MergeResult> {
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
 
     // Check token balances using the provided CLOB token IDs
@@ -536,7 +537,6 @@ export class CTFClient {
     if (noBalance.lt(safeAmountWei)) safeAmountWei = noBalance;
 
     // Select contract: NegRisk adapter for NegRisk markets, standard CTF otherwise
-    const isNegRisk = this.isNegRiskMarket(conditionId, tokenIds);
     const mergeContract = isNegRisk ? this.negRiskAdapterContract : this.ctfContract;
 
     // Dry-run to catch revert reason before submitting actual transaction
@@ -692,7 +692,8 @@ export class CTFClient {
   async redeemByTokenIds(
     conditionId: string,
     tokenIds: TokenIds,
-    outcome?: string
+    outcome?: string,
+    isNegRisk = false,
   ): Promise<RedeemResult> {
     // Check resolution status
     const resolution = await this.getMarketResolution(conditionId);
@@ -716,7 +717,6 @@ export class CTFClient {
       throw new Error(`No ${winningOutcome} tokens to redeem`);
     }
 
-    const isNegRisk = this.isNegRiskMarket(conditionId, tokenIds);
     const gasOptions = await this.getGasOptions();
     let tx;
 
@@ -1237,18 +1237,6 @@ export class CTFClient {
 
   // ===== Private Helpers =====
 
-  /**
-   * Detect if a market uses NegRisk by comparing CLOB token IDs to calculated position IDs.
-   * For standard markets, CLOB IDs match calculated IDs.
-   * For NegRisk markets, they differ because NegRisk wraps CTF positions into different token IDs.
-   */
-  private isNegRiskMarket(conditionId: string, tokenIds: TokenIds): boolean {
-    const calcYesId = this.calculatePositionId(conditionId, 1);
-    const calcNoId = this.calculatePositionId(conditionId, 2);
-    const calcYesDecimal = BigNumber.from(calcYesId).toString();
-    const calcNoDecimal = BigNumber.from(calcNoId).toString();
-    return calcYesDecimal !== tokenIds.yesTokenId || calcNoDecimal !== tokenIds.noTokenId;
-  }
 
   /**
    * Calculate position ID for a given outcome (INTERNAL USE ONLY)

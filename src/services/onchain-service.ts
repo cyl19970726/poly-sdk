@@ -266,14 +266,15 @@ export class OnchainService {
    * Split USDC into YES + NO tokens using explicit token IDs
    *
    * Supports both standard CTF and NegRisk markets.
-   * For NegRisk: uses NegRisk Adapter → tokens at CLOB token IDs.
+   * For NegRisk: uses NegRisk Adapter (set isNegRisk=true).
    */
   async splitByTokenIds(
     conditionId: string,
     tokenIds: TokenIds,
-    amount: string
+    amount: string,
+    isNegRisk = false,
   ): Promise<SplitResult> {
-    return this.ctfClient.splitByTokenIds(conditionId, tokenIds, amount);
+    return this.ctfClient.splitByTokenIds(conditionId, tokenIds, amount, isNegRisk);
   }
 
   /**
@@ -291,14 +292,15 @@ export class OnchainService {
    * Merge YES and NO tokens using explicit token IDs
    *
    * Supports both standard CTF and NegRisk markets.
-   * For NegRisk: uses NegRisk Adapter to merge.
+   * For NegRisk: uses NegRisk Adapter (set isNegRisk=true).
    */
   async mergeByTokenIds(
     conditionId: string,
     tokenIds: TokenIds,
-    amount: string
+    amount: string,
+    isNegRisk = false,
   ): Promise<MergeResult> {
-    return this.ctfClient.mergeByTokenIds(conditionId, tokenIds, amount);
+    return this.ctfClient.mergeByTokenIds(conditionId, tokenIds, amount, isNegRisk);
   }
 
   /**
@@ -326,9 +328,10 @@ export class OnchainService {
   async redeemByTokenIds(
     conditionId: string,
     tokenIds: TokenIds,
-    outcome?: string
+    outcome?: string,
+    isNegRisk = false,
   ): Promise<RedeemResult> {
-    return this.ctfClient.redeemByTokenIds(conditionId, tokenIds, outcome);
+    return this.ctfClient.redeemByTokenIds(conditionId, tokenIds, outcome, isNegRisk);
   }
 
   // ===== Balances =====

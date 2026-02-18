@@ -69,6 +69,8 @@ export interface CTFManagerConfig {
   chainId?: number;
   /** Enable debug logging */
   debug?: boolean;
+  /** Whether this market uses NegRisk (routes to NegRisk Adapter) */
+  negRisk?: boolean;
 }
 
 /**
@@ -150,6 +152,7 @@ export class CTFManager extends EventEmitter {
       rpcUrl: config.rpcUrl ?? 'https://polygon-rpc.com',
       chainId: config.chainId ?? 137,
       debug: config.debug ?? false,
+      negRisk: config.negRisk ?? false,
       ...config,
     };
 
@@ -274,7 +277,18 @@ export class CTFManager extends EventEmitter {
     }
 
     this.log(`Splitting ${amount} USDC...`);
-    const result = await this.ctfClient.split(this.config.conditionId, amount);
+
+    const tokenIds = {
+      yesTokenId: this.config.primaryTokenId,
+      noTokenId: this.config.secondaryTokenId,
+    };
+
+    const result = await this.ctfClient.splitByTokenIds(
+      this.config.conditionId,
+      tokenIds,
+      amount,
+      this.config.negRisk,
+    );
 
     if (result.success) {
       this.log(`Split successful: ${result.txHash}`);
@@ -303,7 +317,8 @@ export class CTFManager extends EventEmitter {
     const result = await this.ctfClient.mergeByTokenIds(
       this.config.conditionId,
       tokenIds,
-      amount
+      amount,
+      this.config.negRisk,
     );
 
     if (result.success) {
@@ -333,7 +348,8 @@ export class CTFManager extends EventEmitter {
     const result = await this.ctfClient.redeemByTokenIds(
       this.config.conditionId,
       tokenIds,
-      outcome
+      outcome,
+      this.config.negRisk,
     );
 
     if (result.success) {
