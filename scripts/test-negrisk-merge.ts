@@ -5,18 +5,26 @@
  * Tests that mergeByTokenIds correctly uses the NegRisk Adapter
  * for NegRisk markets (where CLOB token IDs ≠ calculated position IDs).
  *
- * Usage:
+ * Usage (with wallet system):
+ *   WALLET_ADDRESS=0x752901... npx tsx scripts/test-negrisk-merge.ts
+ *
+ * Usage (with direct key):
  *   PRIVATE_KEY=0x... npx tsx scripts/test-negrisk-merge.ts
+ *
+ * Required env vars (from .env):
+ *   - POLYGON_RPC_URL
+ *   - WALLET_ENCRYPTION_KEY (when using WALLET_ADDRESS)
  *
  * Test flow:
  *   1. Check balance at CLOB token IDs
  *   2. Check balance at calculated position IDs (should differ for NegRisk)
- *   3. Merge $1 via mergeByTokenIds (uses NegRisk Adapter automatically)
+ *   3. Merge small amount via mergeByTokenIds (uses NegRisk Adapter automatically)
  *   4. Verify balance decreased and USDC increased
  */
 
-import { CTFClient, USDC_DECIMALS } from '../src/clients/ctf-client.js';
+import { CTFClient } from '../src/clients/ctf-client.js';
 import { ethers } from 'ethers';
+import { resolve } from 'node:path';
 
 // ======= Configuration =======
 
@@ -27,17 +35,45 @@ const TOKEN_IDS = {
   noTokenId: '4293155955248146015788513757683601555029963724066356360902198499071458481627',
 };
 
-// Small test amount
-const TEST_AMOUNT = '1'; // $1 USDC worth of tokens
+// Small test amount — will be capped by min(YES, NO) balance
+const TEST_AMOUNT = '0.5';
 
-async function main() {
-  const privateKey = process.env.PRIVATE_KEY;
-  if (!privateKey) {
-    console.error('ERROR: Set PRIVATE_KEY env var');
-    process.exit(1);
+async function resolveKey(): Promise<string> {
+  // Option 1: Direct PRIVATE_KEY
+  if (process.env.PRIVATE_KEY && !process.env.WALLET_ADDRESS) {
+    return process.env.PRIVATE_KEY;
   }
 
+  // Option 2: Resolve from wallet store
+  const walletAddress = process.env.WALLET_ADDRESS;
+  const encryptionKey = process.env.WALLET_ENCRYPTION_KEY;
+
+  if (!walletAddress) {
+    throw new Error('Set PRIVATE_KEY or WALLET_ADDRESS env var');
+  }
+  if (!encryptionKey) {
+    throw new Error('WALLET_ENCRYPTION_KEY required when using WALLET_ADDRESS');
+  }
+
+  // Dynamic import to avoid hard dependency on wallet package
+  const { HotWalletService } = await import('@catalyst-team/poly-sdk');
+  const walletDir = resolve(process.cwd(), '..', 'wallets');
+  const { FileWalletStore } = await import(resolve(process.cwd(), '..', 'wallet', 'dist', 'file-wallet-store.js'));
+  const store = new FileWalletStore(resolve(walletDir, 'wallets.encrypted.json'));
+  const service = new HotWalletService({
+    encryptionKey,
+    store,
+    rpcUrl: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+  });
+
+  const key = await service.getPrivateKey(walletAddress);
+  if (!key) throw new Error(`Wallet ${walletAddress} not found in store`);
+  return key;
+}
+
+async function main() {
   const rpcUrl = process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com';
+  const privateKey = await resolveKey();
 
   console.log('=== NegRisk Merge E2E Test ===\n');
 
@@ -69,31 +105,29 @@ async function main() {
   console.log(`  CLOB YES ID: ${clobYes.slice(0, 20)}...`);
   console.log(`  Calc YES ID: ${calcYes.slice(0, 20)}...`);
 
-  if (!isNegRisk) {
-    console.log('\nNot a NegRisk market. Standard merge should work.');
-  }
-
-  // Step 5: Check if we have enough balance to test
-  const minBalance = parseFloat(clobBalances.yesBalance);
+  // Step 5: Determine merge amount (min of YES, NO, TEST_AMOUNT)
+  const yesBalance = parseFloat(clobBalances.yesBalance);
   const noBalance = parseFloat(clobBalances.noBalance);
-  const testAmount = parseFloat(TEST_AMOUNT);
+  const pairable = Math.min(yesBalance, noBalance);
+  const mergeAmount = Math.min(pairable, parseFloat(TEST_AMOUNT));
 
-  if (minBalance < testAmount || noBalance < testAmount) {
-    console.error(`\nInsufficient balance for test. Need ${TEST_AMOUNT} of each. Have: YES=${clobBalances.yesBalance}, NO=${clobBalances.noBalance}`);
+  if (mergeAmount < 0.01) {
+    console.error(`\nInsufficient paired balance. YES=${yesBalance}, NO=${noBalance}, pairable=${pairable}`);
     process.exit(1);
   }
 
-  // Step 6: Merge test amount via mergeByTokenIds
-  console.log(`\n--- Merging ${TEST_AMOUNT} tokens via mergeByTokenIds ---`);
+  // Step 6: Merge via mergeByTokenIds
+  const mergeStr = mergeAmount.toFixed(6);
+  console.log(`\n--- Merging ${mergeStr} tokens via mergeByTokenIds (negRisk: ${isNegRisk}) ---`);
   try {
-    const result = await ctf.mergeByTokenIds(CONDITION_ID, TOKEN_IDS, TEST_AMOUNT);
-    console.log(`✅ Merge succeeded!`);
+    const result = await ctf.mergeByTokenIds(CONDITION_ID, TOKEN_IDS, mergeStr);
+    console.log(`\u2705 Merge succeeded!`);
     console.log(`  TX: ${result.txHash}`);
     console.log(`  Amount: ${result.amount}`);
     console.log(`  USDC received: ${result.usdcReceived}`);
     console.log(`  Gas used: ${result.gasUsed}`);
   } catch (error: any) {
-    console.error(`❌ Merge failed: ${error.message}`);
+    console.error(`\u274C Merge failed: ${error.message}`);
     process.exit(1);
   }
 
@@ -102,15 +136,15 @@ async function main() {
   const clobBalancesAfter = await ctf.getPositionBalanceByTokenIds(CONDITION_ID, TOKEN_IDS);
 
   console.log(`\n--- Balance verification ---`);
-  console.log(`USDC.e: ${usdcBefore} → ${usdcAfter} (diff: +${(parseFloat(usdcAfter) - parseFloat(usdcBefore)).toFixed(6)})`);
-  console.log(`YES tokens: ${clobBalances.yesBalance} → ${clobBalancesAfter.yesBalance}`);
-  console.log(`NO tokens:  ${clobBalances.noBalance} → ${clobBalancesAfter.noBalance}`);
+  console.log(`USDC.e: ${usdcBefore} \u2192 ${usdcAfter} (diff: +${(parseFloat(usdcAfter) - parseFloat(usdcBefore)).toFixed(6)})`);
+  console.log(`YES tokens: ${clobBalances.yesBalance} \u2192 ${clobBalancesAfter.yesBalance}`);
+  console.log(`NO tokens:  ${clobBalances.noBalance} \u2192 ${clobBalancesAfter.noBalance}`);
 
   const usdcDiff = parseFloat(usdcAfter) - parseFloat(usdcBefore);
-  if (usdcDiff >= testAmount * 0.99) {
-    console.log(`\n✅ E2E test PASSED — NegRisk merge via adapter works!`);
+  if (usdcDiff >= mergeAmount * 0.99) {
+    console.log(`\n\u2705 E2E test PASSED \u2014 NegRisk merge via adapter works!`);
   } else {
-    console.log(`\n⚠️  USDC increase (${usdcDiff.toFixed(6)}) less than expected (${TEST_AMOUNT})`);
+    console.log(`\n\u26A0\uFE0F  USDC increase (${usdcDiff.toFixed(6)}) less than expected (${mergeStr})`);
   }
 }
 
