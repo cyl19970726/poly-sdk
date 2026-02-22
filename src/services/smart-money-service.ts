@@ -168,8 +168,8 @@ export interface AutoCopyTradingOptions {
 
   // ========== Phase 1: Detection Mode ==========
 
-  /** Detection mode: 'polling' (Data API, ~5s), 'mempool' (WSS, ~442ms), or 'dual' (both + dedup) */
-  detectionMode?: 'polling' | 'mempool' | 'dual';
+  /** Detection mode: 'polling' (Data API, ~5s) or 'mempool' (WSS, ~442ms) */
+  detectionMode?: 'polling' | 'mempool';
 
   // ========== Phase 2: Enhanced Execution ==========
 
@@ -1020,7 +1020,7 @@ export class SmartMoneyService {
       const targetTrader = traders.find((addr: string) => this.mempoolTargetAddresses.has(addr));
       if (!targetTrader) return;
 
-      // Dedup: check if we've already seen this txHash (for dual mode)
+      // Dedup: check if we've already seen this txHash
       if (tx.hash && this.seenTxHashes.has(tx.hash)) return;
       if (tx.hash) {
         this.seenTxHashes.add(tx.hash);
@@ -1198,7 +1198,7 @@ export class SmartMoneyService {
       filterAddresses?: string[];
       minSize?: number;
       smartMoneyOnly?: boolean;
-      detectionMode?: 'polling' | 'mempool' | 'dual';
+      detectionMode?: 'polling' | 'mempool';
     } = {}
   ): { id: string; unsubscribe: () => void } {
     // 创建过滤后的 handler
@@ -1235,13 +1235,12 @@ export class SmartMoneyService {
       this.targetWallets = [...new Set([...this.targetWallets, ...normalized])];
     }
 
-    // 按 detectionMode 启动检测
+    // 按 detectionMode 启动检测（二选一）
     const mode = options.detectionMode ?? 'polling';
-    if (mode === 'polling' || mode === 'dual') {
-      this.startPolling();
-    }
-    if (mode === 'mempool' || mode === 'dual') {
+    if (mode === 'mempool') {
       this.startMempoolMonitor();
+    } else {
+      this.startPolling();
     }
 
     const subscriptionId = `smart_money_${Date.now()}`;
