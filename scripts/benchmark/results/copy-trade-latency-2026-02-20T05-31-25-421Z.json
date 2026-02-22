@@ -1,0 +1,128 @@
+{
+  "timestamp": "2026-02-20T05:31:25.420Z",
+  "rounds": 1,
+  "market": "Bitcoin Up or Down - February 20, 12:30AM-12:35AM ET",
+  "conditionId": "0xc5289283317c7da2ada99ff2a0609a40f3b4d9310fa4b0b164c384d49223a27b",
+  "orderAmount": 0.5,
+  "results": [
+    {
+      "round": 1,
+      "orderPlacedAt": 1771565485420,
+      "orderFilledAt": null,
+      "tokenId": "48227724425768652853897990349178719502008680507265536638706690939503419106796",
+      "conditionId": "0xc5289283317c7da2ada99ff2a0609a40f3b4d9310fa4b0b164c384d49223a27b",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        }
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "name": "WS Market Channel",
+      "detected": 0,
+      "total": 1,
+      "hasTraderAddress": false,
+      "pushOrPoll": "push",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "WS User Channel",
+      "detected": 0,
+      "total": 1,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "RPC Contract Events",
+      "detected": 0,
+      "total": 1,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "Subgraph",
+      "detected": 0,
+      "total": 1,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "Data API REST",
+      "detected": 0,
+      "total": 1,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "SmartMoney Polling",
+      "detected": 0,
+      "total": 1,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    }
+  ]
+}

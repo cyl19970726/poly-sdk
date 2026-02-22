@@ -1,0 +1,231 @@
+{
+  "timestamp": "2026-02-20T05:06:24.108Z",
+  "rounds": 3,
+  "market": "Bitcoin Up or Down - February 20, 12:00AM-12:15AM ET",
+  "conditionId": "0x4ba75b7d9b0c73cf53a18b7f1a8cbfdb0146e0555899bd17a081469c206a019e",
+  "orderAmount": 5,
+  "results": [
+    {
+      "round": 1,
+      "orderPlacedAt": 1771563982013,
+      "orderFilledAt": null,
+      "tokenId": "34568714994608225628973175293495049111273112496563632401169437923263263734796",
+      "conditionId": "0x4ba75b7d9b0c73cf53a18b7f1a8cbfdb0146e0555899bd17a081469c206a019e",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "orderPlacedAt": 1771563983434,
+      "orderFilledAt": null,
+      "tokenId": "34568714994608225628973175293495049111273112496563632401169437923263263734796",
+      "conditionId": "0x4ba75b7d9b0c73cf53a18b7f1a8cbfdb0146e0555899bd17a081469c206a019e",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 795,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.62 side=BUY size=5"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "orderPlacedAt": 1771563984107,
+      "orderFilledAt": null,
+      "tokenId": "34568714994608225628973175293495049111273112496563632401169437923263263734796",
+      "conditionId": "0x4ba75b7d9b0c73cf53a18b7f1a8cbfdb0146e0555899bd17a081469c206a019e",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        }
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "name": "WS Market Channel",
+      "detected": 1,
+      "total": 3,
+      "hasTraderAddress": false,
+      "pushOrPoll": "push",
+      "avgMs": 795,
+      "minMs": 795,
+      "maxMs": 795,
+      "p50Ms": 795
+    },
+    {
+      "name": "WS User Channel",
+      "detected": 0,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "RPC Contract Events",
+      "detected": 0,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "Subgraph",
+      "detected": 0,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "Data API REST",
+      "detected": 0,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "SmartMoney Polling",
+      "detected": 0,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    }
+  ]
+}

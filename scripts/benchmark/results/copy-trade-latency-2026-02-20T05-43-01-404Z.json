@@ -1,0 +1,244 @@
+{
+  "timestamp": "2026-02-20T05:43:01.403Z",
+  "rounds": 3,
+  "market": "Bitcoin Up or Down - February 20, 12:40AM-12:45AM ET",
+  "conditionId": "0x0349e3539918bf74a67606ff9c6f51ac5f01a9df532dfbb203d43c26f2fc3ea7",
+  "orderAmount": 0.5,
+  "results": [
+    {
+      "round": 1,
+      "orderPlacedAt": 1771566078617,
+      "orderFilledAt": 1771566078617,
+      "tokenId": "95563668955381646650928119476568967303474572631996104249416784034601363442415",
+      "conditionId": "0x0349e3539918bf74a67606ff9c6f51ac5f01a9df532dfbb203d43c26f2fc3ea7",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 452,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.47 side=BUY size=213.978722"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": true,
+          "latencyMs": 918,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "status=MATCHED price=0.47"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": true,
+          "latencyMs": 11537,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "maker=0x8A181a65 taker=0xb73938C8 block=83223029"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": true,
+          "latencyMs": 14291,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=5 price=0.47"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "orderPlacedAt": 1771566114722,
+      "orderFilledAt": 1771566114722,
+      "tokenId": "95563668955381646650928119476568967303474572631996104249416784034601363442415",
+      "conditionId": "0x0349e3539918bf74a67606ff9c6f51ac5f01a9df532dfbb203d43c26f2fc3ea7",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 451,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.3 side=BUY size=5"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": true,
+          "latencyMs": 441,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "status=MATCHED price=0.3"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": true,
+          "latencyMs": 4126,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "maker=0x04895657 taker=0xb73938C8 block=83223047"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": true,
+          "latencyMs": 14272,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.9449 price=0.3"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": true,
+          "latencyMs": 8556,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.9449"
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "orderPlacedAt": 1771566151251,
+      "orderFilledAt": 1771566151251,
+      "tokenId": "95563668955381646650928119476568967303474572631996104249416784034601363442415",
+      "conditionId": "0x0349e3539918bf74a67606ff9c6f51ac5f01a9df532dfbb203d43c26f2fc3ea7",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 265,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.32 side=BUY size=30.9375"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": true,
+          "latencyMs": 422,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "status=MATCHED price=0.32"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": true,
+          "latencyMs": 3494,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "maker=0x74d0702e taker=0xb73938C8 block=83223065"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": true,
+          "latencyMs": 13833,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.9409 price=0.32"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": true,
+          "latencyMs": 6957,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=5"
+        }
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "name": "WS Market Channel",
+      "detected": 3,
+      "total": 3,
+      "hasTraderAddress": false,
+      "pushOrPoll": "push",
+      "avgMs": 389.3333333333333,
+      "minMs": 265,
+      "maxMs": 452,
+      "p50Ms": 451
+    },
+    {
+      "name": "WS User Channel",
+      "detected": 3,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": 593.6666666666666,
+      "minMs": 422,
+      "maxMs": 918,
+      "p50Ms": 441
+    },
+    {
+      "name": "RPC Contract Events",
+      "detected": 3,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": 6385.666666666667,
+      "minMs": 3494,
+      "maxMs": 11537,
+      "p50Ms": 4126
+    },
+    {
+      "name": "Subgraph",
+      "detected": 0,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "Data API REST",
+      "detected": 3,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": 14132,
+      "minMs": 13833,
+      "maxMs": 14291,
+      "p50Ms": 14272
+    },
+    {
+      "name": "SmartMoney Polling",
+      "detected": 2,
+      "total": 3,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": 7756.5,
+      "minMs": 6957,
+      "maxMs": 8556,
+      "p50Ms": 8556
+    }
+  ]
+}

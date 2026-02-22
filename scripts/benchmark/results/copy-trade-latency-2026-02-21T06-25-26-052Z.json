@@ -1,0 +1,401 @@
+{
+  "timestamp": "2026-02-21T06:25:26.051Z",
+  "rounds": 5,
+  "market": "Bitcoin Up or Down - February 21, 1:25AM-1:30AM ET",
+  "conditionId": "0xd3c891cfb6c63342c198ec0e8c8f343e27773e71b44d6be3144a7b47fa70ab80",
+  "orderAmount": 0.5,
+  "results": [
+    {
+      "round": 1,
+      "orderPlacedAt": 1771654949702,
+      "orderFilledAt": 1771654949702,
+      "tokenId": "31615270417850328540788008540639594284131456673296345075322504171862182323112",
+      "conditionId": "0xd3c891cfb6c63342c198ec0e8c8f343e27773e71b44d6be3144a7b47fa70ab80",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 1004,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.5 side=BUY size=5"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": true,
+          "latencyMs": 1017,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "status=MATCHED price=0.5"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": true,
+          "latencyMs": 3961,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "maker=0x7424B5a9 taker=0xb73938C8 block=83267464"
+        },
+        {
+          "name": "Mempool Pending TX",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": true,
+          "latencyMs": 14476,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.9219 price=0.5"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": true,
+          "latencyMs": 10181,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.9219"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "orderPlacedAt": 1771654986038,
+      "orderFilledAt": 1771654986038,
+      "tokenId": "31615270417850328540788008540639594284131456673296345075322504171862182323112",
+      "conditionId": "0xd3c891cfb6c63342c198ec0e8c8f343e27773e71b44d6be3144a7b47fa70ab80",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 465,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.49 side=BUY size=5"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": true,
+          "latencyMs": 467,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "status=MATCHED price=0.49"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": true,
+          "latencyMs": 26547,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "maker=0xDe6E74aE taker=0xb73938C8 block=83267483"
+        },
+        {
+          "name": "Mempool Pending TX",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": true,
+          "latencyMs": 13725,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.922 price=0.49"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "orderPlacedAt": 1771655022899,
+      "orderFilledAt": 1771655022899,
+      "tokenId": "31615270417850328540788008540639594284131456673296345075322504171862182323112",
+      "conditionId": "0xd3c891cfb6c63342c198ec0e8c8f343e27773e71b44d6be3144a7b47fa70ab80",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 432,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.49 side=BUY size=5"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": true,
+          "latencyMs": 450,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "status=MATCHED price=0.49"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": true,
+          "latencyMs": 10516,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "maker=0xDe6E74aE taker=0xb73938C8 block=83267501"
+        },
+        {
+          "name": "Mempool Pending TX",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": true,
+          "latencyMs": 12933,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.922 price=0.49"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "orderPlacedAt": 1771655059131,
+      "orderFilledAt": 1771655059131,
+      "tokenId": "31615270417850328540788008540639594284131456673296345075322504171862182323112",
+      "conditionId": "0xd3c891cfb6c63342c198ec0e8c8f343e27773e71b44d6be3144a7b47fa70ab80",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 446,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.5 side=BUY size=5"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": true,
+          "latencyMs": 477,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "status=MATCHED price=0.5"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": true,
+          "latencyMs": 29524,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "maker=0x893575c7 taker=0xb73938C8 block=83267519"
+        },
+        {
+          "name": "Mempool Pending TX",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": true,
+          "latencyMs": 12953,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.9219 price=0.5"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": true,
+          "latencyMs": 9569,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.9219"
+        }
+      ]
+    },
+    {
+      "round": 5,
+      "orderPlacedAt": 1771655095981,
+      "orderFilledAt": 1771655095981,
+      "tokenId": "31615270417850328540788008540639594284131456673296345075322504171862182323112",
+      "conditionId": "0xd3c891cfb6c63342c198ec0e8c8f343e27773e71b44d6be3144a7b47fa70ab80",
+      "detectors": [
+        {
+          "name": "WS Market Channel",
+          "detected": true,
+          "latencyMs": 479,
+          "hasTraderAddress": false,
+          "pushOrPoll": "push",
+          "details": "price=0.51 side=BUY size=5"
+        },
+        {
+          "name": "WS User Channel",
+          "detected": true,
+          "latencyMs": 426,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "status=MATCHED price=0.51"
+        },
+        {
+          "name": "RPC Contract Events",
+          "detected": true,
+          "latencyMs": 4754,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push",
+          "details": "maker=0x88f46B9e taker=0xb73938C8 block=83267537"
+        },
+        {
+          "name": "Mempool Pending TX",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "push"
+        },
+        {
+          "name": "Subgraph",
+          "detected": false,
+          "latencyMs": null,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll"
+        },
+        {
+          "name": "Data API REST",
+          "detected": true,
+          "latencyMs": 13110,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.922 price=0.51"
+        },
+        {
+          "name": "SmartMoney Polling",
+          "detected": true,
+          "latencyMs": 7726,
+          "hasTraderAddress": true,
+          "pushOrPoll": "poll",
+          "details": "side=BUY size=4.922"
+        }
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "name": "WS Market Channel",
+      "detected": 5,
+      "total": 5,
+      "hasTraderAddress": false,
+      "pushOrPoll": "push",
+      "avgMs": 565.2,
+      "minMs": 432,
+      "maxMs": 1004,
+      "p50Ms": 465
+    },
+    {
+      "name": "WS User Channel",
+      "detected": 5,
+      "total": 5,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": 567.4,
+      "minMs": 426,
+      "maxMs": 1017,
+      "p50Ms": 467
+    },
+    {
+      "name": "RPC Contract Events",
+      "detected": 5,
+      "total": 5,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": 15060.4,
+      "minMs": 3961,
+      "maxMs": 29524,
+      "p50Ms": 10516
+    },
+    {
+      "name": "Mempool Pending TX",
+      "detected": 0,
+      "total": 5,
+      "hasTraderAddress": true,
+      "pushOrPoll": "push",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "Subgraph",
+      "detected": 0,
+      "total": 5,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": null,
+      "minMs": null,
+      "maxMs": null,
+      "p50Ms": null
+    },
+    {
+      "name": "Data API REST",
+      "detected": 5,
+      "total": 5,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": 13439.4,
+      "minMs": 12933,
+      "maxMs": 14476,
+      "p50Ms": 13110
+    },
+    {
+      "name": "SmartMoney Polling",
+      "detected": 3,
+      "total": 5,
+      "hasTraderAddress": true,
+      "pushOrPoll": "poll",
+      "avgMs": 9158.666666666666,
+      "minMs": 7726,
+      "maxMs": 10181,
+      "p50Ms": 9569
+    }
+  ]
+}
