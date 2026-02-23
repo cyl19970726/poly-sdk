@@ -121,6 +121,7 @@ export interface MakerOrderInfo {
   orderId: string;        // API: order_id
   matchedAmount: number;  // API: matched_amount
   price: number;          // API: price
+  side?: 'BUY' | 'SELL';  // API: side (maker's own side, opposite of taker)
   assetId?: string;       // API: asset_id
   outcome?: string;       // API: outcome
   owner?: string;         // API: owner (maker's address)
@@ -140,6 +141,8 @@ export interface UserTrade {
   transactionHash?: string;
   /** Taker's order ID - use this to link trade to order */
   takerOrderId?: string;
+  /** Fee rate in basis points (e.g., 100 = 1%). From API: fee_rate_bps */
+  feeRateBps?: number;
   /** Maker orders involved in this trade */
   makerOrders?: MakerOrderInfo[];
 }
@@ -1379,6 +1382,7 @@ export class RealtimeServiceV2 extends EventEmitter {
           orderId: m.order_id as string || '',
           matchedAmount: Number(m.matched_amount) || 0,
           price: Number(m.price) || 0,
+          side: m.side as 'BUY' | 'SELL' | undefined,
           assetId: m.asset_id as string | undefined,
           outcome: m.outcome as string | undefined,
           owner: m.owner as string | undefined,
@@ -1393,6 +1397,10 @@ export class RealtimeServiceV2 extends EventEmitter {
         ? this.normalizeTimestamp(matchTimeRaw)
         : undefined;
 
+      // Parse fee_rate_bps — basis points (e.g. "100" = 1%)
+      const rawFeeRateBps = payload.fee_rate_bps;
+      const feeRateBps = rawFeeRateBps != null ? Number(rawFeeRateBps) : undefined;
+
       const trade: UserTrade = {
         tradeId: (payload.id ?? payload.trade_id) as string || '',
         market: payload.market as string || '',
@@ -1406,6 +1414,7 @@ export class RealtimeServiceV2 extends EventEmitter {
         transactionHash: payload.transaction_hash as string | undefined,
         // New fields for order-trade linking
         takerOrderId: payload.taker_order_id as string | undefined,
+        feeRateBps: feeRateBps != null && !isNaN(feeRateBps) ? feeRateBps : undefined,
         makerOrders,
       };
       this.emit('userTrade', trade);
