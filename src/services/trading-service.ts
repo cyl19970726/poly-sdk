@@ -510,11 +510,15 @@ export class TradingService {
             ((result.orderID !== undefined && result.orderID !== '') ||
               (result.transactionsHashes !== undefined && result.transactionsHashes.length > 0)));
 
+        const errorMsg = !success
+          ? (result.errorMsg || `Limit order rejected (status: ${result.status ?? 'unknown'}, response: ${JSON.stringify(result)})`)
+          : result.errorMsg;
+
         return {
           success,
           orderId: result.orderID,
           orderIds: result.orderIDs,
-          errorMsg: result.errorMsg,
+          errorMsg,
           transactionHashes: result.transactionsHashes,
         };
       } catch (error) {
@@ -570,11 +574,15 @@ export class TradingService {
             ((result.orderID !== undefined && result.orderID !== '') ||
               (result.transactionsHashes !== undefined && result.transactionsHashes.length > 0)));
 
+        const errorMsg = !success
+          ? (result.errorMsg || `Market order rejected (status: ${result.status ?? 'unknown'}, response: ${JSON.stringify(result)})`)
+          : result.errorMsg;
+
         return {
           success,
           orderId: result.orderID,
           orderIds: result.orderIDs,
-          errorMsg: result.errorMsg,
+          errorMsg,
           transactionHashes: result.transactionsHashes,
         };
       } catch (error) {
