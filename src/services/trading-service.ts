@@ -706,8 +706,9 @@ export class TradingService {
               if (result.orderID) {
                 successfulOrderIds.push(result.orderID);
               }
-            } else if (result.errorMsg) {
-              errors.push(`Order ${index}: ${result.errorMsg}`);
+            } else {
+              const msg = result.errorMsg || `rejected (response: ${JSON.stringify(result)})`;
+              errors.push(`Order ${index}: ${msg}`);
             }
           });
         }
@@ -718,8 +719,8 @@ export class TradingService {
         return {
           success: totalSuccess > 0,
           orderIds: successfulOrderIds,
-          errorMsg: errors.length > 0
-            ? `Batch: ${totalSuccess} succeeded, ${totalFailed} failed.\n${errors.join('\n')}`
+          errorMsg: totalSuccess < orders.length
+            ? `Batch: ${totalSuccess}/${orders.length} succeeded.\n${errors.join('\n')}`
             : undefined,
         };
       } catch (error) {
