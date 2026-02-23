@@ -172,8 +172,8 @@ export interface AutoCopyTradingOptions {
 
   // ========== Phase 1: Detection Mode ==========
 
-  /** Detection mode: 'polling' (Data API, ~5s) or 'mempool' (WSS, ~442ms) */
-  detectionMode?: 'polling' | 'mempool';
+  /** Detection mode: 'polling' (Data API, ~5s), 'mempool' (WSS, ~2ms), 'dual' (both with dedup) */
+  detectionMode?: 'polling' | 'mempool' | 'dual';
 
   // ========== Phase 2: Enhanced Execution ==========
 
@@ -1207,7 +1207,7 @@ export class SmartMoneyService {
       filterAddresses?: string[];
       minSize?: number;
       smartMoneyOnly?: boolean;
-      detectionMode?: 'polling' | 'mempool';
+      detectionMode?: 'polling' | 'mempool' | 'dual';
     } = {}
   ): { id: string; unsubscribe: () => void } {
     // 创建过滤后的 handler
@@ -1244,9 +1244,13 @@ export class SmartMoneyService {
       this.targetWallets = [...new Set([...this.targetWallets, ...normalized])];
     }
 
-    // 按 detectionMode 启动检测（二选一）
+    // 按 detectionMode 启动检测
     const mode = options.detectionMode ?? 'polling';
-    if (mode === 'mempool') {
+    if (mode === 'dual') {
+      console.log('[SmartMoneyService] Dual detection: mempool (primary) + polling (fallback)');
+      this.startMempoolMonitor();
+      this.startPolling();
+    } else if (mode === 'mempool') {
       this.startMempoolMonitor();
     } else {
       this.startPolling();
