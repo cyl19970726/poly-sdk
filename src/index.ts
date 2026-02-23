@@ -652,6 +652,8 @@ export class PolymarketSDK {
       privateKey,
       chainId: config.chainId,
       credentials: config.creds,
+      builderCreds: config.builderCreds,
+      safeAddress: config.safeAddress,
     });
 
     this.subgraph = new SubgraphClient(this.rateLimiter, this.cache);

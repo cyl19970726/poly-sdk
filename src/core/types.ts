@@ -265,6 +265,23 @@ export interface PolySDKOptions {
    * Must support newPendingTransactions with full TX objects.
    */
   mempoolWssUrl?: string;
+
+  /**
+   * Builder API credentials for fee sharing and gasless order execution.
+   * Enables Builder mode with Polymarket's Builder Relayer.
+   */
+  builderCreds?: {
+    key: string;
+    secret: string;
+    passphrase: string;
+  };
+
+  /**
+   * Gnosis Safe address for Builder mode.
+   * When provided with builderCreds, orders use Safe as maker/funder.
+   * Derive via RelayerService.getSafeAddress() or deploy via RelayerService.deploySafe().
+   */
+  safeAddress?: string;
 }
 
 // K-Line interval types

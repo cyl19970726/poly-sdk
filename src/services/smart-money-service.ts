@@ -134,6 +134,10 @@ export interface SmartMoneyTrade {
   timestamp: number;
   isSmartMoney: boolean;
   smartMoneyInfo?: SmartMoneyWallet;
+  /** 检测到交易的时间戳 (ms) */
+  detectedAt?: number;
+  /** 检测来源: polling (Data API) 或 mempool (WSS) */
+  detectionSource?: 'polling' | 'mempool';
 }
 
 /**
@@ -151,8 +155,8 @@ export interface AutoCopyTradingOptions {
   maxSizePerTrade?: number;
   /** Maximum slippage (e.g., 0.03 = 3%) */
   maxSlippage?: number;
-  /** Order type: FOK or FAK */
-  orderType?: 'FOK' | 'FAK';
+  /** Order type: FOK, FAK (market), GTC, GTD (limit) */
+  orderType?: 'FOK' | 'FAK' | 'GTC' | 'GTD';
   /** Delay before executing (ms) */
   delay?: number;
 
@@ -905,6 +909,8 @@ export class SmartMoneyService {
         if (!trade) {
           continue;
         }
+        trade.detectedAt = Date.now();
+        trade.detectionSource = 'polling';
 
         // 通知所有 handlers
         for (const handler of this.tradeHandlers) {
@@ -1072,6 +1078,7 @@ export class SmartMoneyService {
       });
 
       // Build SmartMoneyTrade and notify handlers
+      const now = Date.now();
       const trade: SmartMoneyTrade = {
         traderAddress: targetTrader,
         side: targetOrder.side === OrderSide.BUY ? 'BUY' : 'SELL',
@@ -1079,9 +1086,11 @@ export class SmartMoneyService {
         price,
         tokenId: targetOrder.tokenId,
         txHash: tx.hash,
-        timestamp: Date.now(),
+        timestamp: now,
         isSmartMoney: this.smartMoneySet.has(targetTrader),
         smartMoneyInfo: this.smartMoneyCache.get(targetTrader),
+        detectedAt: now,
+        detectionSource: 'mempool',
         // conditionId, marketSlug, outcome not available from mempool
       };
 
@@ -1331,8 +1340,13 @@ export class SmartMoneyService {
     const delay = options.delay ?? 0;
     const dryRun = options.dryRun ?? false;
 
+    // Derive limit order type from orderType (GTC/GTD → limit, FOK/FAK → market)
+    const limitOrderType: 'GTC' | 'GTD' = orderType === 'GTD' ? 'GTD' : 'GTC';
+    const marketOrderType: 'FOK' | 'FAK' = orderType === 'FAK' ? 'FAK' : 'FOK';
+
     // Phase 2: Enhanced execution config
-    const orderMode = options.orderMode ?? 'market';
+    // Auto-infer orderMode from orderType if not explicitly set
+    const orderMode = options.orderMode ?? (orderType === 'GTC' || orderType === 'GTD' ? 'limit' : 'market');
     const limitPriceOffset = options.limitPriceOffset ?? 0.01;
     const splitCount = options.splitCount ?? 1;
     const splitSpread = options.splitSpread ?? 0.001;
@@ -1426,19 +1440,19 @@ export class SmartMoneyService {
               mode: orderMode,
             });
           } else {
-            // Phase 2: Route selection (OrderManager limit vs TradingService market)
-            if (options.orderManager && orderMode === 'limit') {
-              // Limit Order path (via OrderManager)
+            // Phase 2: Route selection
+            if (orderMode === 'limit') {
+              // Limit Order path
               const limitPrice = this.calculateLimitPrice(trade.side, trade.price, limitPriceOffset);
 
-              if (splitCount === 1) {
-                // Single limit order
+              if (options.orderManager && splitCount === 1) {
+                // Single limit order via OrderManager (with lifecycle tracking)
                 const handle = options.orderManager.placeOrder({
                   tokenId,
                   side: trade.side,
                   price: limitPrice,
                   size: copySize,
-                  orderType: 'GTC',
+                  orderType: limitOrderType,
                 });
 
                 // Notify via callback
@@ -1461,7 +1475,7 @@ export class SmartMoneyService {
                   });
 
                 result = { success: true, orderId: handle.orderId };
-              } else {
+              } else if (splitCount > 1) {
                 // Split orders (via createBatchOrders)
                 try {
                   const orders = this.createSplitOrders({
@@ -1472,32 +1486,40 @@ export class SmartMoneyService {
                     splitCount,
                     splitSpread,
                     limitPriceOffset,
+                    orderType: limitOrderType,
                   });
 
                   result = await this.tradingService.createBatchOrders(orders);
-                  // Note: createBatchOrders returns OrderResult without OrderHandle
-                  // Split orders need manual watch via orderIds
                 } catch (error) {
                   result = {
                     success: false,
                     errorMsg: error instanceof Error ? error.message : String(error),
                   };
                 }
+              } else {
+                // Single limit order via TradingService directly (no OrderManager)
+                result = await this.tradingService.createLimitOrder({
+                  tokenId,
+                  side: trade.side,
+                  price: limitPrice,
+                  size: copySize,
+                  orderType: limitOrderType,
+                });
               }
             } else {
-              // Original Market Order path (via TradingService)
+              // Market Order path (via TradingService)
               result = await this.tradingService.createMarketOrder({
                 tokenId,
                 side: trade.side,
                 amount: usdcAmount,
                 price: slippagePrice,
-                orderType,
+                orderType: marketOrderType,
               });
             }
           }
 
-          // Update stats (for market orders and split orders)
-          if (!options.orderManager || orderMode !== 'limit' || splitCount > 1) {
+          // Update stats (skip for OrderManager single limit orders — stats updated via handlers)
+          if (!(options.orderManager && orderMode === 'limit' && splitCount === 1)) {
             if (result.success) {
               stats.tradesExecuted++;
               stats.totalUsdcSpent += usdcAmount;
@@ -2758,14 +2780,15 @@ export class SmartMoneyService {
     splitCount: number;
     splitSpread: number;
     limitPriceOffset: number;
+    orderType?: 'GTC' | 'GTD';
   }): Array<{
     tokenId: string;
     side: 'BUY' | 'SELL';
     price: number;
     size: number;
-    orderType: 'GTC';
+    orderType: 'GTC' | 'GTD';
   }> {
-    const { tokenId, side, basePrice, totalSize, splitCount, splitSpread, limitPriceOffset } = params;
+    const { tokenId, side, basePrice, totalSize, splitCount, splitSpread, limitPriceOffset, orderType = 'GTC' } = params;
 
     // Validate splitCount
     if (splitCount > 15) {
@@ -2793,7 +2816,7 @@ export class SmartMoneyService {
       side: 'BUY' | 'SELL';
       price: number;
       size: number;
-      orderType: 'GTC';
+      orderType: 'GTC' | 'GTD';
     }> = [];
 
     for (let i = 0; i < effectiveSplitCount; i++) {
@@ -2806,7 +2829,7 @@ export class SmartMoneyService {
         side,
         price: limitPrice,
         size: sizePerOrder,
-        orderType: 'GTC',
+        orderType,
       });
     }
 
