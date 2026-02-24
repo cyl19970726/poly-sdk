@@ -214,6 +214,13 @@ export interface AutoCopyTradingOptions {
    */
   splitSpread?: number;
 
+  // ========== Retry ==========
+
+  /** 下单失败重试次数（默认 3） */
+  retryCount?: number;
+  /** 重试间隔毫秒（默认 1000） */
+  retryDelay?: number;
+
   // ========== Callbacks ==========
 
   /** Callbacks */
@@ -1354,6 +1361,8 @@ export class SmartMoneyService {
     const limitPriceOffset = options.limitPriceOffset ?? 0.01;
     const splitCount = options.splitCount ?? 1;
     const splitSpread = options.splitSpread ?? 0.001;
+    const retryCount = options.retryCount ?? 3;
+    const retryDelay = options.retryDelay ?? 1000;
 
     // Subscribe
     const subscription = this.subscribeSmartMoneyTrades(
@@ -1431,8 +1440,23 @@ export class SmartMoneyService {
 
           const usdcAmount = copyValue; // Already calculated above
 
+          // Pre-flight balance check (BUY only — check USDC collateral)
+          if (!dryRun && trade.side === 'BUY') {
+            try {
+              const { balance } = await this.tradingService.getBalanceAllowance('COLLATERAL');
+              const availableUsdc = parseFloat(balance) / 1e6; // USDC has 6 decimals
+              if (availableUsdc < usdcAmount) {
+                console.warn(`[Copy Trading] 余额不足: 需要 $${usdcAmount.toFixed(2)}，可用 $${availableUsdc.toFixed(2)}，跳过此交易`);
+                stats.tradesSkipped++;
+                return;
+              }
+            } catch {
+              // Balance check failed — proceed with order (CLOB will reject if truly insufficient)
+            }
+          }
+
           // Execute
-          let result: OrderResult;
+          let result: OrderResult = { success: false, errorMsg: 'Order not executed' };
 
           if (dryRun) {
             result = { success: true, orderId: `dry_run_${Date.now()}` };
@@ -1444,81 +1468,90 @@ export class SmartMoneyService {
               mode: orderMode,
             });
           } else {
-            // Phase 2: Route selection
-            if (orderMode === 'limit') {
-              // Limit Order path
-              const limitPrice = this.calculateLimitPrice(trade.side, trade.price, limitPriceOffset);
+            // Phase 2: Route selection with retry
+            for (let attempt = 0; attempt <= retryCount; attempt++) {
+              if (orderMode === 'limit') {
+                // Limit Order path
+                const limitPrice = this.calculateLimitPrice(trade.side, trade.price, limitPriceOffset);
 
-              if (options.orderManager && splitCount === 1) {
-                // Single limit order via OrderManager (with lifecycle tracking)
-                const handle = options.orderManager.placeOrder({
-                  tokenId,
-                  side: trade.side,
-                  price: limitPrice,
-                  size: copySize,
-                  orderType: limitOrderType,
-                });
-
-                // Notify via callback
-                if (options.onOrderPlaced) {
-                  options.onOrderPlaced(handle);
-                }
-
-                // Register fill handlers
-                handle
-                  .onFilled((fill: any) => {
-                    stats.tradesExecuted++;
-                    stats.totalUsdcSpent += copyValue;
-                    if (options.onOrderFilled) {
-                      options.onOrderFilled(fill);
-                    }
-                  })
-                  .onRejected((reason: string) => {
-                    stats.tradesFailed++;
-                    console.warn('[Copy Trading] Order rejected:', reason);
-                  });
-
-                result = { success: true, orderId: handle.orderId };
-              } else if (splitCount > 1) {
-                // Split orders (via createBatchOrders)
-                try {
-                  const orders = this.createSplitOrders({
+                if (options.orderManager && splitCount === 1) {
+                  // Single limit order via OrderManager (with lifecycle tracking) — no retry (OrderManager manages lifecycle)
+                  const handle = options.orderManager.placeOrder({
                     tokenId,
                     side: trade.side,
-                    basePrice: trade.price,
-                    totalSize: copySize,
-                    splitCount,
-                    splitSpread,
-                    limitPriceOffset,
+                    price: limitPrice,
+                    size: copySize,
                     orderType: limitOrderType,
                   });
 
-                  result = await this.tradingService.createBatchOrders(orders);
-                } catch (error) {
-                  result = {
-                    success: false,
-                    errorMsg: error instanceof Error ? error.message : String(error),
-                  };
+                  // Notify via callback
+                  if (options.onOrderPlaced) {
+                    options.onOrderPlaced(handle);
+                  }
+
+                  // Register fill handlers
+                  handle
+                    .onFilled((fill: any) => {
+                      stats.tradesExecuted++;
+                      stats.totalUsdcSpent += copyValue;
+                      if (options.onOrderFilled) {
+                        options.onOrderFilled(fill);
+                      }
+                    })
+                    .onRejected((reason: string) => {
+                      stats.tradesFailed++;
+                      console.warn('[Copy Trading] Order rejected:', reason);
+                    });
+
+                  result = { success: true, orderId: handle.orderId };
+                  break; // OrderManager path: no retry
+                } else if (splitCount > 1) {
+                  // Split orders (via createBatchOrders)
+                  try {
+                    const orders = this.createSplitOrders({
+                      tokenId,
+                      side: trade.side,
+                      basePrice: trade.price,
+                      totalSize: copySize,
+                      splitCount,
+                      splitSpread,
+                      limitPriceOffset,
+                      orderType: limitOrderType,
+                    });
+
+                    result = await this.tradingService.createBatchOrders(orders);
+                  } catch (error) {
+                    result = {
+                      success: false,
+                      errorMsg: error instanceof Error ? error.message : String(error),
+                    };
+                  }
+                } else {
+                  // Single limit order via TradingService directly (no OrderManager)
+                  result = await this.tradingService.createLimitOrder({
+                    tokenId,
+                    side: trade.side,
+                    price: limitPrice,
+                    size: copySize,
+                    orderType: limitOrderType,
+                  });
                 }
               } else {
-                // Single limit order via TradingService directly (no OrderManager)
-                result = await this.tradingService.createLimitOrder({
+                // Market Order path (via TradingService)
+                result = await this.tradingService.createMarketOrder({
                   tokenId,
                   side: trade.side,
-                  price: limitPrice,
-                  size: copySize,
-                  orderType: limitOrderType,
+                  amount: usdcAmount,
+                  price: slippagePrice,
+                  orderType: marketOrderType,
                 });
               }
-            } else {
-              // Market Order path (via TradingService)
-              result = await this.tradingService.createMarketOrder({
-                tokenId,
-                side: trade.side,
-                amount: usdcAmount,
-                price: slippagePrice,
-                orderType: marketOrderType,
-              });
+
+              // Retry logic: break on success or last attempt
+              if (result.success || attempt >= retryCount) break;
+
+              console.log(`[Copy Trading] 下单失败，${retryDelay}ms 后重试 (${attempt + 1}/${retryCount}): ${result.errorMsg ?? 'unknown error'}`);
+              await new Promise(r => setTimeout(r, retryDelay));
             }
           }
 
