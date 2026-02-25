@@ -116,6 +116,22 @@ export class HotWalletService {
 
 
   /**
+   * 导入已有私钥到加密存储
+   *
+   * @param privateKey - 私钥（hex string，可带 0x 前缀）
+   * @returns 钱包地址和加密后的私钥
+   */
+  async importWallet(privateKey: string): Promise<WalletInfo> {
+    const wallet = new ethers.Wallet(privateKey);
+    const encryptedKey = this.encryptPrivateKey(wallet.privateKey);
+
+    return {
+      address: wallet.address,
+      encryptedKey: JSON.stringify(encryptedKey),
+    };
+  }
+
+  /**
    * 为用户创建并存储钱包
    *
    * @param userId - 用户 ID

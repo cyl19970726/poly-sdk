@@ -158,6 +158,7 @@ export interface WalletProfile {
   unrealizedPnL: number;
   avgPercentPnL: number;
   positionCount: number;
+  closedPositionCount: number;
   tradeCount: number;
   smartScore: number; // 0-100
   lastActiveAt: Date;
@@ -240,14 +241,18 @@ export class WalletService {
    * Get comprehensive wallet profile with PnL analysis
    */
   async getWalletProfile(address: string): Promise<WalletProfile> {
-    const [positions, activities] = await Promise.all([
+    const [positions, activities, closedPnLResult] = await Promise.all([
       this.dataApi.getPositions(address),
       this.dataApi.getActivity(address, { limit: 100 }),
+      this.getClosedPositionsTotalPnL(address),
     ]);
 
-    const totalPnL = positions.reduce((sum, p) => sum + (p.cashPnl || 0), 0);
-    const realizedPnL = positions.reduce((sum, p) => sum + (p.realizedPnl || 0), 0);
-    const unrealizedPnL = totalPnL - realizedPnL;
+    const openCashPnL = positions.reduce((sum, p) => sum + (p.cashPnl || 0), 0);
+    const openRealizedPnL = positions.reduce((sum, p) => sum + (p.realizedPnl || 0), 0);
+    const unrealizedPnL = openCashPnL - openRealizedPnL;
+
+    const realizedPnL = openRealizedPnL + closedPnLResult.totalPnL;
+    const totalPnL = unrealizedPnL + realizedPnL;
 
     const avgPercentPnL =
       positions.length > 0
@@ -263,10 +268,31 @@ export class WalletService {
       unrealizedPnL,
       avgPercentPnL,
       positionCount: positions.length,
+      closedPositionCount: closedPnLResult.count,
       tradeCount: activities.filter((a) => a.type === 'TRADE').length,
       smartScore: this.calculateSmartScore(positions, activities),
       lastActiveAt: lastActivity ? new Date(lastActivity.timestamp) : new Date(0),
     };
+  }
+
+  /**
+   * Paginate through all closed positions and sum their realized PnL.
+   */
+  private async getClosedPositionsTotalPnL(address: string): Promise<{ totalPnL: number; count: number }> {
+    let totalPnL = 0;
+    let count = 0;
+    let offset = 0;
+    const limit = 50; // API max per page
+
+    while (offset < 100000) {
+      const batch = await this.dataApi.getClosedPositions(address, { limit, offset });
+      totalPnL += batch.reduce((sum, p) => sum + (p.realizedPnl || 0), 0);
+      count += batch.length;
+      if (batch.length < limit) break;
+      offset += limit;
+    }
+
+    return { totalPnL, count };
   }
 
   /**

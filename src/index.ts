@@ -370,6 +370,7 @@ export type {
 // TradingService - Unified trading and market data
 export {
   TradingService,
+  createBuilderApiKey,
   POLYGON_MAINNET,
   POLYGON_AMOY,
   // Polymarket order minimum requirements
@@ -378,6 +379,7 @@ export {
 } from './services/trading-service.js';
 export type {
   TradingServiceConfig,
+  BuilderKeyResult,
   // Order types - Side and OrderType are re-exported from core/types.ts via trading-service.ts
   // They are also exported via `export * from './core/types.js'` above
   ApiCredentials,

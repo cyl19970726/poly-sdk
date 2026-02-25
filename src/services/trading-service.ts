@@ -1263,3 +1263,63 @@ export class TradingService {
   }
 
 }
+
+// ============================================================================
+// Standalone Utilities
+// ============================================================================
+
+export interface BuilderKeyResult {
+  /** L2 CLOB API credentials (derived or newly created) */
+  clobCreds: ApiCredentials;
+  /** L3 Builder API credentials */
+  builderCreds: ApiCredentials;
+}
+
+/**
+ * Create Builder API key for a wallet. Full code-based flow:
+ *   L1 (EIP-712) → derive/create L2 CLOB creds → create L3 Builder key.
+ *
+ * No browser needed.
+ */
+export async function createBuilderApiKey(privateKey: string): Promise<BuilderKeyResult> {
+  const wallet = new Wallet(privateKey);
+
+  // Step 1: L1 auth → derive or create L2 CLOB credentials
+  const l1Client = new ClobClient(CLOB_HOST, POLYGON_MAINNET as Chain, wallet);
+
+  let clobCreds: ApiCredentials;
+  const derived = await l1Client.deriveApiKey();
+  if (derived.key) {
+    clobCreds = derived;
+  } else {
+    const created = await l1Client.createApiKey();
+    if (!created.key) {
+      throw new PolymarketError(
+        ErrorCode.AUTH_FAILED,
+        'Failed to derive or create CLOB API key. Wallet may not be registered on Polymarket.'
+      );
+    }
+    clobCreds = created;
+  }
+
+  // Step 2: L2 auth → create L3 Builder API key
+  const l2Client = new ClobClient(
+    CLOB_HOST,
+    POLYGON_MAINNET as Chain,
+    wallet,
+    { key: clobCreds.key, secret: clobCreds.secret, passphrase: clobCreds.passphrase },
+  );
+
+  const builderCreds = await l2Client.createBuilderApiKey();
+  if (!builderCreds.key) {
+    throw new PolymarketError(
+      ErrorCode.AUTH_FAILED,
+      'Failed to create Builder API key.'
+    );
+  }
+
+  return {
+    clobCreds,
+    builderCreds: { key: builderCreds.key, secret: builderCreds.secret, passphrase: builderCreds.passphrase },
+  };
+}
