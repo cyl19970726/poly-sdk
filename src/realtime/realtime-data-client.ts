@@ -152,8 +152,11 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
       }
     }
 
-    if (assetsIds.length > 0) {
-      this.subscribeMarket(assetsIds);
+    // Deduplicate: sendMergedMarketSubscription sends 5 subscription types
+    // with the same token filter, producing 5x duplicate IDs after extraction.
+    const uniqueIds = [...new Set(assetsIds)];
+    if (uniqueIds.length > 0) {
+      this.subscribeMarket(uniqueIds);
     }
   }
 

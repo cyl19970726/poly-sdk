@@ -1146,6 +1146,12 @@ export class RealtimeServiceV2 extends EventEmitter {
           this.subscriptionGenerations.set(subId, this.connectionGeneration);
         }
       }, 1000);
+    } else if (this.accumulatedMarketTokenIds.size > 0) {
+      // Race condition fix: if a disconnect cancelled the 100ms batch timer
+      // before sendMergedMarketSubscription() could run, the subscription was
+      // never stored in subscriptionMessages. Re-schedule it on reconnect.
+      this.log(`Re-scheduling merged market subscription (${this.accumulatedMarketTokenIds.size} tokens, not yet stored)...`);
+      this.scheduleMergedMarketSubscription();
     }
 
     this.emit('connected');
