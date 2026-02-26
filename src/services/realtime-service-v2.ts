@@ -247,6 +247,10 @@ export class RealtimeServiceV2 extends EventEmitter {
   /** Separate client for crypto prices (uses LIVE_DATA endpoint) */
   private cryptoClient: RealTimeDataClient | null = null;
   private config: RealtimeServiceConfig;
+
+  // Store crypto subscriptions for reconnect replay
+  private cryptoBinanceSymbols: Set<string> = new Set();
+  private cryptoChainlinkSymbols: Set<string> = new Set();
   private subscriptions: Map<string, Subscription> = new Map();
   private subscriptionIdCounter = 0;
   private connected = false;
@@ -438,6 +442,8 @@ export class RealtimeServiceV2 extends EventEmitter {
     this.subscriptionMessages.clear();
     this.subscriptionGenerations.clear();
     this.accumulatedMarketTokenIds.clear();
+    this.cryptoBinanceSymbols.clear();
+    this.cryptoChainlinkSymbols.clear();
     this.userCredentials = null;
   }
 
@@ -782,6 +788,9 @@ export class RealtimeServiceV2 extends EventEmitter {
   subscribeCryptoPrices(symbols: string[], handlers: CryptoPriceHandlers = {}): Subscription {
     const subId = `crypto_${++this.subscriptionIdCounter}`;
 
+    // Store symbols for reconnect replay
+    for (const s of symbols) this.cryptoBinanceSymbols.add(s);
+
     // Use custom RealTimeDataClient method
     if (this.cryptoClient) {
       this.cryptoClient.subscribeCryptoPrices(symbols);
@@ -800,6 +809,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       type: 'update',
       unsubscribe: () => {
         this.off('cryptoPrice', handler);
+        for (const s of symbols) this.cryptoBinanceSymbols.delete(s);
         if (this.cryptoClient) {
           this.cryptoClient.unsubscribeCryptoPrices(symbols);
         }
@@ -822,6 +832,9 @@ export class RealtimeServiceV2 extends EventEmitter {
   subscribeCryptoChainlinkPrices(symbols: string[], handlers: CryptoPriceHandlers = {}): Subscription {
     const subId = `crypto_chainlink_${++this.subscriptionIdCounter}`;
 
+    // Store symbols for reconnect replay
+    for (const s of symbols) this.cryptoChainlinkSymbols.add(s);
+
     // Use custom RealTimeDataClient method
     if (this.cryptoClient) {
       this.cryptoClient.subscribeCryptoChainlinkPrices(symbols);
@@ -840,6 +853,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       type: 'update',
       unsubscribe: () => {
         this.off('cryptoChainlinkPrice', handler);
+        for (const s of symbols) this.cryptoChainlinkSymbols.delete(s);
         if (this.cryptoClient) {
           this.cryptoClient.unsubscribeCryptoChainlinkPrices(symbols);
         }
@@ -1184,6 +1198,21 @@ export class RealtimeServiceV2 extends EventEmitter {
   private handleCryptoConnect(_client: RealTimeDataClientInterface): void {
     this.cryptoConnected = true;
     this.log('Connected to crypto prices WebSocket');
+
+    // Re-subscribe to stored crypto subscriptions on reconnect
+    if (this.cryptoBinanceSymbols.size > 0 || this.cryptoChainlinkSymbols.size > 0) {
+      this.log(`Re-subscribing to crypto prices (${this.cryptoBinanceSymbols.size} Binance, ${this.cryptoChainlinkSymbols.size} Chainlink symbols)...`);
+      setTimeout(() => {
+        if (!this.cryptoClient || !this.cryptoConnected) return;
+        if (this.cryptoBinanceSymbols.size > 0) {
+          this.cryptoClient.subscribeCryptoPrices([...this.cryptoBinanceSymbols]);
+        }
+        if (this.cryptoChainlinkSymbols.size > 0) {
+          this.cryptoClient.subscribeCryptoChainlinkPrices([...this.cryptoChainlinkSymbols]);
+        }
+      }, 1000);
+    }
+
     this.emit('cryptoConnected');
   }
 
@@ -1422,18 +1451,24 @@ export class RealtimeServiceV2 extends EventEmitter {
   }
 
   private handleCryptoPriceMessage(payload: Record<string, unknown>, timestamp: number): void {
+    const value = Number(payload.value);
+    if (!payload.symbol || !isFinite(value) || value <= 0) return;
+
     const price: CryptoPrice = {
-      symbol: payload.symbol as string || '',
-      price: Number(payload.value) || 0,
+      symbol: payload.symbol as string,
+      price: value,
       timestamp: this.normalizeTimestamp(payload.timestamp) || timestamp,
     };
     this.emit('cryptoPrice', price);
   }
 
   private handleCryptoChainlinkPriceMessage(payload: Record<string, unknown>, timestamp: number): void {
+    const value = Number(payload.value);
+    if (!payload.symbol || !isFinite(value) || value <= 0) return;
+
     const price: CryptoPrice = {
-      symbol: payload.symbol as string || '',
-      price: Number(payload.value) || 0,
+      symbol: payload.symbol as string,
+      price: value,
       timestamp: this.normalizeTimestamp(payload.timestamp) || timestamp,
     };
     this.emit('cryptoChainlinkPrice', price);
