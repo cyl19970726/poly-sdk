@@ -232,6 +232,11 @@ export interface AutoCopyTradingOptions {
 
   /** Order filled callback (includes FillEvent details) */
   onOrderFilled?: (fill: any) => void; // Will be typed as FillEvent when imported
+
+  /** Async pre-order check — return true to proceed, false to skip.
+   * Called after all sync filters pass but before order execution.
+   * Use for async checks like market volume / orderbook depth. */
+  preOrderCheck?: (trade: SmartMoneyTrade) => Promise<boolean>;
 }
 
 /**
@@ -1452,6 +1457,20 @@ export class SmartMoneyService {
               }
             } catch {
               // Balance check failed — proceed with order (CLOB will reject if truly insufficient)
+            }
+          }
+
+          // Pre-order async check (e.g., volume / orderbook depth)
+          if (options.preOrderCheck) {
+            try {
+              const shouldProceed = await options.preOrderCheck(trade);
+              if (!shouldProceed) {
+                stats.tradesSkipped++;
+                return;
+              }
+            } catch (checkErr) {
+              // Check failed — proceed with order
+              console.warn(`[Copy Trading] preOrderCheck error: ${checkErr instanceof Error ? checkErr.message : checkErr}`);
             }
           }
 
