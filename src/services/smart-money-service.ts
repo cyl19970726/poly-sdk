@@ -237,6 +237,13 @@ export interface AutoCopyTradingOptions {
    * Called after all sync filters pass but before order execution.
    * Use for async checks like market volume / orderbook depth. */
   preOrderCheck?: (trade: SmartMoneyTrade) => Promise<boolean>;
+
+  // ========== Sell Full Position ==========
+
+  /** When true, SELL orders use our full token balance instead of copying the target's size.
+   * Useful when copying makers — we may not hold the same amount, so we sell everything we have.
+   * Default: false */
+  sellFullPosition?: boolean;
 }
 
 /**
@@ -1436,6 +1443,25 @@ export class SmartMoneyService {
           if (!tokenId) {
             stats.tradesSkipped++;
             return;
+          }
+
+          // Sell full position: override copySize with our actual token balance
+          if (!dryRun && trade.side === 'SELL' && options.sellFullPosition) {
+            try {
+              const { balance: tokenBalance } = await this.tradingService.getBalanceAllowance('CONDITIONAL', tokenId);
+              const availableShares = parseFloat(tokenBalance) / 1e6; // CTF tokens have 6 decimals
+              if (availableShares < MIN_SHARES) {
+                console.warn(`[Copy Trading] 持仓不足: tokenId=${tokenId.slice(0, 12)}... 持有 ${availableShares.toFixed(2)} shares — SKIP`);
+                stats.tradesSkipped++;
+                return;
+              }
+              copySize = availableShares;
+              copyValue = copySize * trade.price;
+              console.log(`[Copy Trading] 全仓卖出: ${copySize.toFixed(2)} shares @ $${trade.price.toFixed(4)}`);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.warn(`[Copy Trading] 查询持仓失败: ${msg} — 使用默认数量`);
+            }
           }
 
           // Price with slippage
