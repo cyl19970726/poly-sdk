@@ -112,6 +112,13 @@ export type {
 export { MarketService, getIntervalMs as getIntervalMsService } from './services/market-service.js';
 export type { ResolvedMarketTokens } from './services/market-service.js';
 
+export { EventService } from './services/event-service.js';
+export type {
+  PolymarketEvent,
+  ListEventsParams,
+  EventTag,
+} from './services/event-service.js';
+
 // Real-time (V2 - using custom RealTimeDataClient)
 export { RealtimeServiceV2 } from './services/realtime-service-v2.js';
 
@@ -609,6 +616,7 @@ import { RealtimeServiceV2 } from './services/realtime-service-v2.js';
 import { SmartMoneyService } from './services/smart-money-service.js';
 import { BinanceService } from './services/binance-service.js';
 import { DipArbService } from './services/dip-arb-service.js';
+import { EventService } from './services/event-service.js';
 import type { UnifiedMarket, ProcessedOrderbook, ArbitrageOpportunity, KLineInterval, KLineCandle, DualKLineData, PolySDKOptions } from './core/types.js';
 import { createUnifiedCache, type UnifiedCache } from './core/unified-cache.js';
 
@@ -629,6 +637,7 @@ export class PolymarketSDK {
   // Services
   public readonly wallets: WalletService;
   public readonly markets: MarketService;
+  public readonly events: EventService;
   public readonly realtime: RealtimeServiceV2;
   public readonly smartMoney: SmartMoneyService;
   public readonly binance: BinanceService;
@@ -664,6 +673,7 @@ export class PolymarketSDK {
     this.wallets = new WalletService(this.dataApi, this.subgraph, this.cache);
     this.binance = new BinanceService(this.rateLimiter, this.cache);
     this.markets = new MarketService(this.gammaApi, this.dataApi, this.rateLimiter, this.cache, undefined, this.binance);
+    this.events = new EventService(this.rateLimiter, this.cache);
     this.realtime = new RealtimeServiceV2();
     this.smartMoney = new SmartMoneyService(
       this.wallets,
