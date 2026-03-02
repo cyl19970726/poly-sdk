@@ -84,6 +84,7 @@ const CTF_ABI = [
 
 const ERC20_ABI = [
   'function approve(address spender, uint256 amount) returns (bool)',
+  'function transfer(address to, uint256 amount) returns (bool)',
 ];
 
 const ERC1155_ABI = [
@@ -245,6 +246,58 @@ export class RelayerService {
         return {
           success: false,
           errorMessage: `USDC approval failed: ${tx?.state || 'No transaction'}`,
+        };
+      }
+
+      return {
+        success: true,
+        txHash: tx.transactionHash,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * Transfer USDC.e to another address via Relayer (gasless)
+   *
+   * Enables Safe-to-EOA or Safe-to-Safe USDC transfers without gas fees.
+   * Useful for fund distribution/collection from main wallet to strategy wallets.
+   *
+   * @param recipient - Recipient address (can be EOA or another Safe)
+   * @param amount - USDC amount in human-readable format (e.g., "100" for 100 USDC)
+   * @returns RelayerResult with transaction status
+   *
+   * @example
+   * ```typescript
+   * // Withdraw from Safe to main wallet
+   * const result = await relayer.transferUsdc("0x0f5988a267303f46b50912f176450491df10476f", "300");
+   * if (result.success) {
+   *   console.log(`Transfer tx: ${result.txHash}`);
+   * }
+   * ```
+   */
+  async transferUsdc(recipient: string, amount: string): Promise<RelayerResult> {
+    const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
+    const usdcInterface = new ethers.utils.Interface(ERC20_ABI);
+    const data = usdcInterface.encodeFunctionData('transfer', [recipient, amountWei]);
+
+    try {
+      const response = await this.relayClient.execute([{
+        to: USDC_CONTRACT,
+        value: '0',
+        data,
+      }]);
+
+      const tx = await response.wait();
+
+      if (!tx || tx.state === RelayerState.FAILED) {
+        return {
+          success: false,
+          errorMessage: `USDC transfer failed: ${tx?.state || 'No transaction'}`,
         };
       }
 
