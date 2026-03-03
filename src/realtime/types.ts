@@ -493,6 +493,14 @@ export interface Message {
 // Client Configuration & Interface
 // ============================================================================
 
+/** Optional logger interface for structured logging */
+export interface ILogger {
+  debug(msg: string, data?: unknown): void;
+  info(msg: string, data?: unknown): void;
+  warn(msg: string, data?: unknown): void;
+  error(msg: string, data?: unknown): void;
+}
+
 /**
  * RealTimeDataClient configuration
  */
@@ -519,6 +527,8 @@ export interface RealTimeDataClientConfig {
   pongTimeout?: number;
   /** Enable debug logging */
   debug?: boolean;
+  /** Optional structured logger (fallback to console.log if not provided) */
+  logger?: ILogger;
 }
 
 /**

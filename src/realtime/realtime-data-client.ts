@@ -39,10 +39,11 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
 
 export class RealTimeDataClient implements RealTimeDataClientInterface {
   private ws: WebSocket | null = null;
-  private config: Required<Omit<RealTimeDataClientConfig, 'onConnect' | 'onMessage' | 'onStatusChange' | 'channel'>> & {
+  private config: Required<Omit<RealTimeDataClientConfig, 'onConnect' | 'onMessage' | 'onStatusChange' | 'channel' | 'logger'>> & {
     onConnect?: RealTimeDataClientConfig['onConnect'];
     onMessage?: RealTimeDataClientConfig['onMessage'];
     onStatusChange?: RealTimeDataClientConfig['onStatusChange'];
+    logger?: RealTimeDataClientConfig['logger'];
   };
 
   private status: ConnectionStatus = ConnectionStatus.DISCONNECTED;
@@ -72,6 +73,7 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
       maxReconnectAttempts: config.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS,
       pongTimeout: config.pongTimeout ?? DEFAULT_PONG_TIMEOUT,
       debug: config.debug ?? false,
+      logger: config.logger,
       onConnect: config.onConnect,
       onMessage: config.onMessage,
       onStatusChange: config.onStatusChange,
@@ -478,7 +480,8 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
   private handleMessage(data: WebSocket.RawData): void {
     try {
       const raw = data.toString();
-      this.log(`Raw message: ${raw.slice(0, 200)}${raw.length > 200 ? '...' : ''}`);
+      // Use debug level for raw message (too verbose)
+      this.log(`Raw message: ${raw.slice(0, 200)}${raw.length > 200 ? '...' : ''}`, 'debug');
       const parsed = JSON.parse(raw);
 
       // Handle different message formats from Polymarket CLOB WebSocket
@@ -863,8 +866,19 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
     }
   }
 
-  private log(message: string): void {
-    if (this.config.debug) {
+  /**
+   * Log with level support (debug/info)
+   * - Raw message: debug level (too verbose)
+   * - Connection events: info level
+   */
+  private log(message: string, level: 'debug' | 'info' = 'info'): void {
+    if (!this.config.debug) return;
+
+    if (this.config.logger) {
+      // Use structured logger if provided
+      this.config.logger[level](message);
+    } else {
+      // Fallback to console.log
       console.log(`[RealTimeDataClient] ${message}`);
     }
   }

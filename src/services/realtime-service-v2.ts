@@ -28,6 +28,14 @@ import type { PriceUpdate, BookUpdate, Orderbook, OrderbookLevel } from '../core
 // Types
 // ============================================================================
 
+/** Optional logger interface for structured logging */
+export interface ILogger {
+  debug(msg: string, data?: unknown): void;
+  info(msg: string, data?: unknown): void;
+  warn(msg: string, data?: unknown): void;
+  error(msg: string, data?: unknown): void;
+}
+
 export interface RealtimeServiceConfig {
   /** Auto-reconnect on disconnect (default: true) */
   autoReconnect?: boolean;
@@ -35,6 +43,8 @@ export interface RealtimeServiceConfig {
   pingInterval?: number;
   /** Enable debug logging (default: false) */
   debug?: boolean;
+  /** Optional structured logger (fallback to console.log if not provided) */
+  logger?: ILogger;
 }
 
 // Market data types
@@ -294,6 +304,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       autoReconnect: config.autoReconnect ?? true,
       pingInterval: config.pingInterval ?? 5000,
       debug: config.debug ?? false,
+      logger: config.logger,
     };
   }
 
@@ -1242,7 +1253,9 @@ export class RealtimeServiceV2 extends EventEmitter {
   }
 
   private handleMessage(_client: RealTimeDataClientInterface, message: Message): void {
-    this.log(`Received: ${message.topic}:${message.type}`);
+    // Use debug level for frequent price_change events, info for others
+    const level = message.type === 'price_change' ? 'debug' : 'info';
+    this.log(`Received: ${message.topic}:${message.type}`, level);
 
     const payload = message.payload as Record<string, unknown>;
 
@@ -1662,8 +1675,20 @@ export class RealtimeServiceV2 extends EventEmitter {
     this.client.unsubscribe(msg);
   }
 
-  private log(message: string): void {
-    if (this.config.debug) {
+  /**
+   * Log with level support (debug/info)
+   * - price_change events: debug level (too frequent)
+   * - orderbook updates: info level
+   * - connection events: info level
+   */
+  private log(message: string, level: 'debug' | 'info' = 'info'): void {
+    if (!this.config.debug) return;
+
+    if (this.config.logger) {
+      // Use structured logger if provided
+      this.config.logger[level](message);
+    } else {
+      // Fallback to console.log
       console.log(`[RealtimeService] ${message}`);
     }
   }
