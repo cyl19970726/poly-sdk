@@ -87,8 +87,14 @@ const ERC20_ABI = [
 // ===== Types =====
 
 export interface CTFConfig {
-  /** Private key for signing transactions */
-  privateKey: string;
+  /**
+   * Private key for signing transactions
+   *
+   * Optional: If not provided, CTFClient operates in read-only mode.
+   * Read-only mode supports: getMarketResolution(), getPositionBalance()
+   * Requires private key: split(), merge(), redeem()
+   */
+  privateKey?: string;
   /** RPC URL (default: Polygon mainnet) */
   rpcUrl?: string;
   /** Chain ID (default: 137 for Polygon) */
@@ -192,7 +198,7 @@ const DEFAULT_MATIC_PRICE = 0.50;
 
 export class CTFClient {
   private provider: ethers.providers.JsonRpcProvider;
-  private wallet: Wallet;
+  private wallet: Wallet | null;
   private ctfContract: Contract;
   private negRiskAdapterContract: Contract;
   private usdcContract: Contract;
@@ -201,14 +207,27 @@ export class CTFClient {
   private txTimeout: number;
   private cachedMaticPrice: number = DEFAULT_MATIC_PRICE;
   private maticPriceLastUpdated: number = 0;
+  private readonly readOnly: boolean;
 
   constructor(config: CTFConfig) {
     const rpcUrl = config.rpcUrl || 'https://polygon-rpc.com';
     this.provider = new ethers.providers.JsonRpcProvider(rpcUrl);
-    this.wallet = new Wallet(config.privateKey, this.provider);
-    this.ctfContract = new Contract(CTF_CONTRACT, CTF_ABI, this.wallet);
-    this.negRiskAdapterContract = new Contract(NEG_RISK_ADAPTER, NEG_RISK_ADAPTER_ABI, this.wallet);
-    this.usdcContract = new Contract(USDC_CONTRACT, ERC20_ABI, this.wallet);
+    this.readOnly = !config.privateKey;
+
+    // Create wallet and signer only if private key is provided
+    if (config.privateKey) {
+      this.wallet = new Wallet(config.privateKey, this.provider);
+      this.ctfContract = new Contract(CTF_CONTRACT, CTF_ABI, this.wallet);
+      this.negRiskAdapterContract = new Contract(NEG_RISK_ADAPTER, NEG_RISK_ADAPTER_ABI, this.wallet);
+      this.usdcContract = new Contract(USDC_CONTRACT, ERC20_ABI, this.wallet);
+    } else {
+      // Read-only mode: use provider directly (no signing capability)
+      this.wallet = null;
+      this.ctfContract = new Contract(CTF_CONTRACT, CTF_ABI, this.provider);
+      this.negRiskAdapterContract = new Contract(NEG_RISK_ADAPTER, NEG_RISK_ADAPTER_ABI, this.provider);
+      this.usdcContract = new Contract(USDC_CONTRACT, ERC20_ABI, this.provider);
+    }
+
     this.gasPriceMultiplier = config.gasPriceMultiplier || 1.2;
     this.confirmations = config.confirmations || 1;
     this.txTimeout = config.txTimeout || 60000;
@@ -216,9 +235,35 @@ export class CTFClient {
 
   /**
    * Get wallet address
+   *
+   * @throws Error if in read-only mode (no private key provided)
    */
   getAddress(): string {
+    if (!this.wallet) {
+      throw new Error('CTFClient is in read-only mode. Provide a private key to use this method.');
+    }
     return this.wallet.address;
+  }
+
+  /**
+   * Check if client is in read-only mode
+   */
+  isReadOnly(): boolean {
+    return this.readOnly;
+  }
+
+  /**
+   * Ensure client is not in read-only mode
+   *
+   * @throws Error if in read-only mode
+   */
+  private ensureNotReadOnly(methodName: string): void {
+    if (this.readOnly) {
+      throw new Error(
+        `CTFClient.${methodName}() requires a private key. ` +
+        `This client is in read-only mode. Provide a private key in the config to use transaction methods.`
+      );
+    }
   }
 
   /**
@@ -232,7 +277,8 @@ export class CTFClient {
    * - Use SwapService.swap('USDC', 'USDC_E', amount) to convert
    */
   async getUsdcBalance(): Promise<string> {
-    const balance = await this.usdcContract.balanceOf(this.wallet.address);
+    this.ensureNotReadOnly('getUsdcBalance');
+    const balance = await this.usdcContract.balanceOf(this.wallet!.address);
     return ethers.utils.formatUnits(balance, USDC_DECIMALS);
   }
 
@@ -242,8 +288,9 @@ export class CTFClient {
    * This is NOT the token used by CTF. Use getUsdcBalance() for CTF operations.
    */
   async getNativeUsdcBalance(): Promise<string> {
+    this.ensureNotReadOnly('getNativeUsdcBalance');
     const nativeUsdcContract = new Contract(NATIVE_USDC_CONTRACT, ERC20_ABI, this.provider);
-    const balance = await nativeUsdcContract.balanceOf(this.wallet.address);
+    const balance = await nativeUsdcContract.balanceOf(this.wallet!.address);
     return ethers.utils.formatUnits(balance, USDC_DECIMALS);
   }
 
@@ -273,10 +320,11 @@ export class CTFClient {
     maticBalance: string;
     suggestion?: string;
   }> {
+    this.ensureNotReadOnly('checkReadyForCTF');
     const [usdcE, nativeUsdc, matic] = await Promise.all([
       this.getUsdcBalance(),
       this.getNativeUsdcBalance(),
-      this.provider.getBalance(this.wallet.address),
+      this.provider.getBalance(this.wallet!.address),
     ]);
 
     const usdcEBalance = parseFloat(usdcE);
@@ -331,16 +379,18 @@ export class CTFClient {
    * ```
    */
   async split(conditionId: string, amount: string): Promise<SplitResult> {
+    this.ensureNotReadOnly('split');
+
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
 
     // 1. Check USDC balance
-    const balance = await this.usdcContract.balanceOf(this.wallet.address);
+    const balance = await this.usdcContract.balanceOf(this.wallet!.address);
     if (balance.lt(amountWei)) {
       throw new Error(`Insufficient USDC balance. Have: ${ethers.utils.formatUnits(balance, USDC_DECIMALS)}, Need: ${amount}`);
     }
 
     // 2. Check and approve USDC if needed
-    const allowance = await this.usdcContract.allowance(this.wallet.address, CTF_CONTRACT);
+    const allowance = await this.usdcContract.allowance(this.wallet!.address, CTF_CONTRACT);
     if (allowance.lt(amountWei)) {
       const approveTx = await this.usdcContract.approve(
         CTF_CONTRACT,
@@ -387,9 +437,10 @@ export class CTFClient {
    * @returns SplitResult with transaction details
    */
   async splitByTokenIds(conditionId: string, tokenIds: TokenIds, amount: string, isNegRisk = false): Promise<SplitResult> {
+    this.ensureNotReadOnly('splitByTokenIds');
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
 
-    const balance = await this.usdcContract.balanceOf(this.wallet.address);
+    const balance = await this.usdcContract.balanceOf(this.wallet!.address);
     if (balance.lt(amountWei)) {
       throw new Error(`Insufficient USDC balance. Have: ${ethers.utils.formatUnits(balance, USDC_DECIMALS)}, Need: ${amount}`);
     }
@@ -398,7 +449,7 @@ export class CTFClient {
     const splitContract = isNegRisk ? this.negRiskAdapterContract : this.ctfContract;
 
     // Check and approve USDC for the target contract
-    const allowance = await this.usdcContract.allowance(this.wallet.address, targetContract);
+    const allowance = await this.usdcContract.allowance(this.wallet!.address, targetContract);
     if (allowance.lt(amountWei)) {
       const approveTx = await this.usdcContract.approve(
         targetContract,
@@ -444,6 +495,8 @@ export class CTFClient {
    * ```
    */
   async merge(conditionId: string, amount: string): Promise<MergeResult> {
+    this.ensureNotReadOnly('merge');
+
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
 
     // Check token balances using calculated position IDs
@@ -518,6 +571,7 @@ export class CTFClient {
    * @returns MergeResult with transaction details
    */
   async mergeByTokenIds(conditionId: string, tokenIds: TokenIds, amount: string, isNegRisk = false): Promise<MergeResult> {
+    this.ensureNotReadOnly('mergeByTokenIds');
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
 
     // Check token balances using the provided CLOB token IDs
@@ -611,6 +665,7 @@ export class CTFClient {
    * @see redeemByTokenIds - Use this for Polymarket CLOB markets
    */
   async redeem(conditionId: string, outcome?: string): Promise<RedeemResult> {
+    this.ensureNotReadOnly('redeem');
     // Check resolution status
     const resolution = await this.getMarketResolution(conditionId);
     if (!resolution.isResolved) {
@@ -695,6 +750,7 @@ export class CTFClient {
     outcome?: string,
     isNegRisk = false,
   ): Promise<RedeemResult> {
+    this.ensureNotReadOnly('redeemByTokenIds');
     // Check resolution status
     const resolution = await this.getMarketResolution(conditionId);
     if (!resolution.isResolved) {
@@ -765,12 +821,13 @@ export class CTFClient {
    * @deprecated Use getPositionBalanceByTokenIds for CLOB markets
    */
   async getPositionBalance(conditionId: string): Promise<PositionBalance> {
+    this.ensureNotReadOnly('getPositionBalance');
     const yesPositionId = this.calculatePositionId(conditionId, 1);
     const noPositionId = this.calculatePositionId(conditionId, 2);
 
     const [yesBalance, noBalance] = await Promise.all([
-      this.ctfContract.balanceOf(this.wallet.address, yesPositionId),
-      this.ctfContract.balanceOf(this.wallet.address, noPositionId),
+      this.ctfContract.balanceOf(this.wallet!.address, yesPositionId),
+      this.ctfContract.balanceOf(this.wallet!.address, noPositionId),
     ]);
 
     return {
@@ -811,9 +868,10 @@ export class CTFClient {
     conditionId: string,
     tokenIds: TokenIds
   ): Promise<PositionBalance> {
+    this.ensureNotReadOnly('getPositionBalanceByTokenIds');
     const [yesBalance, noBalance] = await Promise.all([
-      this.ctfContract.balanceOf(this.wallet.address, tokenIds.yesTokenId),
-      this.ctfContract.balanceOf(this.wallet.address, tokenIds.noTokenId),
+      this.ctfContract.balanceOf(this.wallet!.address, tokenIds.yesTokenId),
+      this.ctfContract.balanceOf(this.wallet!.address, tokenIds.noTokenId),
     ]);
 
     return {
