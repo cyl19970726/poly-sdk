@@ -211,7 +211,12 @@ export class CTFClient {
 
   constructor(config: CTFConfig) {
     const rpcUrl = config.rpcUrl || 'https://polygon-rpc.com';
-    this.provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const chainId = config.chainId || 137; // Default to Polygon mainnet
+    // Use StaticJsonRpcProvider to avoid automatic network detection which can fail with some RPCs
+    this.provider = new ethers.providers.StaticJsonRpcProvider(rpcUrl, {
+      name: 'polygon',
+      chainId,
+    });
     this.readOnly = !config.privateKey;
 
     // Create wallet and signer only if private key is provided
