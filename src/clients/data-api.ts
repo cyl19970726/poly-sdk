@@ -449,6 +449,27 @@ export class DataApiClient {
   }
 
   /**
+   * Get position for a specific tokenId
+   *
+   * Encapsulates position lookup by asset. Use for clear/sell flows that need size by tokenId.
+   *
+   * @param address - Wallet address
+   * @param tokenId - ERC-1155 asset/token ID
+   * @param options - Optional limit for internal pagination (default 500)
+   * @returns Position if found, null otherwise
+   */
+  async getPositionByTokenId(
+    address: string,
+    tokenId: string,
+    options?: { limit?: number }
+  ): Promise<Position | null> {
+    const positions = await this.getPositions(address, {
+      limit: options?.limit ?? 500,
+    });
+    return positions.find((p) => p.asset === tokenId) ?? null;
+  }
+
+  /**
    * Get closed positions for a wallet address
    *
    * @param address - Wallet address

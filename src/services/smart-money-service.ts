@@ -214,6 +214,11 @@ export interface AutoCopyTradingOptions {
    */
   splitSpread?: number;
 
+  /** GTD order: remaining time in seconds. When 0, order expires immediately (invalid).
+   * Only used when orderType is GTD.
+   */
+  gtdExpiration?: number;
+
   // ========== Retry ==========
 
   /** 下单失败重试次数（默认 3） */
@@ -1369,6 +1374,13 @@ export class SmartMoneyService {
     const retryCount = options.retryCount ?? 3;
     const retryDelay = options.retryDelay ?? 1000;
 
+    // GTD expiration: remaining seconds → unix timestamp
+    const gtdExpirationUnix = (() => {
+      const exp = options.gtdExpiration;
+      if (exp == null || exp <= 0) return undefined;
+      return Math.floor(Date.now() / 1000) + exp;
+    })();
+
     // Subscribe
     const subscription = this.subscribeSmartMoneyTrades(
       async (trade: SmartMoneyTrade) => {
@@ -1380,32 +1392,36 @@ export class SmartMoneyService {
             return;
           }
 
-          // Filters
-          const tradeValue = trade.size * trade.price;
-          if (tradeValue < minTradeSize) {
-            stats.tradesSkipped++;
-            return;
-          }
-
-          if (sideFilter && trade.side !== sideFilter) {
-            stats.tradesSkipped++;
-            return;
-          }
-
-          // Phase 2: Price range filter
-          if (options.priceRange) {
-            const { min, max } = options.priceRange;
-            if (trade.price < min || trade.price > max) {
+          // SELL direction: bypass all filter logic (minTradeSize, sideFilter, priceRange, tradeFilter)
+          const isSell = trade.side === 'SELL';
+          if (!isSell) {
+            // Filters (BUY only)
+            const tradeValue = trade.size * trade.price;
+            if (tradeValue < minTradeSize) {
               stats.tradesSkipped++;
-              stats.filteredByPrice = (stats.filteredByPrice || 0) + 1;
               return;
             }
-          }
 
-          // Custom trade filter
-          if (options.tradeFilter && !options.tradeFilter(trade)) {
-            stats.tradesSkipped++;
-            return;
+            if (sideFilter && trade.side !== sideFilter) {
+              stats.tradesSkipped++;
+              return;
+            }
+
+            // Phase 2: Price range filter
+            if (options.priceRange) {
+              const { min, max } = options.priceRange;
+              if (trade.price < min || trade.price > max) {
+                stats.tradesSkipped++;
+                stats.filteredByPrice = (stats.filteredByPrice || 0) + 1;
+                return;
+              }
+            }
+
+            // Custom trade filter
+            if (options.tradeFilter && !options.tradeFilter(trade)) {
+              stats.tradesSkipped++;
+              return;
+            }
           }
 
           // Calculate size (Polymarket minimum: 5 shares)
@@ -1445,8 +1461,8 @@ export class SmartMoneyService {
 
           const usdcAmount = copyValue; // Already calculated above
 
-          // Pre-flight balance check (BUY only — check USDC collateral)
-          if (!dryRun && trade.side === 'BUY') {
+          // Pre-flight balance check (BUY only — check USDC collateral; SELL bypasses)
+          if (!dryRun && !isSell) {
             try {
               const { balance } = await this.tradingService.getBalanceAllowance('COLLATERAL');
               const availableUsdc = parseFloat(balance) / 1e6; // USDC has 6 decimals
@@ -1460,8 +1476,8 @@ export class SmartMoneyService {
             }
           }
 
-          // Pre-order async check (e.g., volume / orderbook depth)
-          if (options.preOrderCheck) {
+          // Pre-order async check (e.g., volume / orderbook depth; SELL bypasses)
+          if (!isSell && options.preOrderCheck) {
             try {
               const shouldProceed = await options.preOrderCheck(trade);
               if (!shouldProceed) {
@@ -1501,6 +1517,7 @@ export class SmartMoneyService {
                     price: limitPrice,
                     size: copySize,
                     orderType: limitOrderType,
+                    ...(limitOrderType === 'GTD' && gtdExpirationUnix != null && { expiration: gtdExpirationUnix }),
                   });
 
                   // Notify via callback
@@ -1517,9 +1534,27 @@ export class SmartMoneyService {
                         options.onOrderFilled(fill);
                       }
                     })
-                    .onRejected((reason: string) => {
+                    .onRejected(async (reason: string) => {
                       stats.tradesFailed++;
                       console.warn('[Copy Trading] Order rejected:', reason);
+                      // pm_tracker: SELL + insufficient position → retry with actual position (clearPosition)
+                      if (isSell && tokenId && this.isInsufficientPositionError(reason)) {
+                        try {
+                          const retryResult = await this.tradingService.clearPosition({
+                            tokenId,
+                            price: slippagePrice,
+                            orderType: marketOrderType,
+                          });
+                          if (retryResult.success) {
+                            stats.tradesFailed--;
+                            stats.tradesExecuted++;
+                            stats.totalUsdcSpent += copyValue;
+                            console.log('[Copy Trading] SELL 持仓不足，已按实际持仓清仓成功');
+                          }
+                        } catch {
+                          // ignore
+                        }
+                      }
                     });
 
                   result = { success: true, orderId: handle.orderId };
@@ -1536,6 +1571,7 @@ export class SmartMoneyService {
                       splitSpread,
                       limitPriceOffset,
                       orderType: limitOrderType,
+                      expiration: limitOrderType === 'GTD' ? gtdExpirationUnix : undefined,
                     });
 
                     result = await this.tradingService.createBatchOrders(orders);
@@ -1553,6 +1589,7 @@ export class SmartMoneyService {
                     price: limitPrice,
                     size: copySize,
                     orderType: limitOrderType,
+                    ...(limitOrderType === 'GTD' && gtdExpirationUnix != null && { expiration: gtdExpirationUnix }),
                   });
                 }
               } else {
@@ -1571,6 +1608,23 @@ export class SmartMoneyService {
 
               console.log(`[Copy Trading] 下单失败，${retryDelay}ms 后重试 (${attempt + 1}/${retryCount}): ${result.errorMsg ?? 'unknown error'}`);
               await new Promise(r => setTimeout(r, retryDelay));
+            }
+          }
+
+          // pm_tracker: SELL + insufficient position → retry with actual position size (clearPosition)
+          if (!result.success && isSell && tokenId && this.isInsufficientPositionError(result.errorMsg)) {
+            try {
+              const retryResult = await this.tradingService.clearPosition({
+                tokenId,
+                price: slippagePrice,
+                orderType: marketOrderType,
+              });
+              if (retryResult.success) {
+                result = retryResult;
+                console.log('[Copy Trading] SELL 持仓不足，已按实际持仓清仓成功');
+              }
+            } catch (retryErr) {
+              console.warn('[Copy Trading] retry clearPosition failed:', retryErr instanceof Error ? retryErr.message : retryErr);
             }
           }
 
@@ -2837,14 +2891,16 @@ export class SmartMoneyService {
     splitSpread: number;
     limitPriceOffset: number;
     orderType?: 'GTC' | 'GTD';
+    expiration?: number;
   }): Array<{
     tokenId: string;
     side: 'BUY' | 'SELL';
     price: number;
     size: number;
     orderType: 'GTC' | 'GTD';
+    expiration?: number;
   }> {
-    const { tokenId, side, basePrice, totalSize, splitCount, splitSpread, limitPriceOffset, orderType = 'GTC' } = params;
+    const { tokenId, side, basePrice, totalSize, splitCount, splitSpread, limitPriceOffset, orderType = 'GTC', expiration } = params;
 
     // Validate splitCount
     if (splitCount > 15) {
@@ -2873,6 +2929,7 @@ export class SmartMoneyService {
       price: number;
       size: number;
       orderType: 'GTC' | 'GTD';
+      expiration?: number;
     }> = [];
 
     for (let i = 0; i < effectiveSplitCount; i++) {
@@ -2880,16 +2937,37 @@ export class SmartMoneyService {
       const priceOffset = side === 'BUY' ? i * splitSpread : -i * splitSpread;
       const limitPrice = this.roundToTick(this.clamp(baseLimitPrice + priceOffset, 0.01, 0.99));
 
-      orders.push({
+      const order: { tokenId: string; side: 'BUY' | 'SELL'; price: number; size: number; orderType: 'GTC' | 'GTD'; expiration?: number } = {
         tokenId,
         side,
         price: limitPrice,
         size: sizePerOrder,
         orderType,
-      });
+      };
+      if (orderType === 'GTD' && expiration != null) {
+        order.expiration = expiration;
+      }
+      orders.push(order);
     }
 
     return orders;
+  }
+
+  /**
+   * Check if error message indicates insufficient position (for SELL orders)
+   * Matches pm_tracker: "not enough balance / allowance" and similar
+   */
+  private isInsufficientPositionError(msg: string | undefined): boolean {
+    if (!msg) return false;
+    const lower = msg.toLowerCase();
+    return (
+      lower.includes('not enough balance / allowance') ||
+      lower.includes('insufficient') ||
+      lower.includes('not enough') ||
+      lower.includes('持仓不足') ||
+      lower.includes('insufficient position') ||
+      lower.includes('insufficient balance')
+    );
   }
 
   /**

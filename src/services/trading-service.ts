@@ -44,6 +44,7 @@ import {
   canOrderBeCancelled,
   calculateOrderProgress,
 } from '../core/order-status.js';
+import type { DataApiClient } from '../clients/data-api.js';
 
 // Chain IDs
 export const POLYGON_MAINNET = 137;
@@ -104,6 +105,8 @@ export interface TradingServiceConfig {
   };
   /** Gnosis Safe address — required for Builder mode so orders use Safe as maker/funder */
   safeAddress?: string;
+  /** Data API client — required for clearPosition() to fetch size internally */
+  dataApi?: DataApiClient;
 }
 
 // Order types
@@ -123,6 +126,15 @@ export interface MarketOrderParams {
   side: Side;
   amount: number;
   price?: number;
+  orderType?: 'FOK' | 'FAK';
+}
+
+/** Parameters for clearing a token position (market sell) */
+export interface ClearPositionParams {
+  tokenId: string;
+  /** Min accept price (with slippage applied) */
+  price: number;
+  /** Order type for market sell (default FOK) */
   orderType?: 'FOK' | 'FAK';
 }
 
@@ -320,6 +332,8 @@ export class TradingService {
   private tickSizeCache: Map<string, string> = new Map();
   private negRiskCache: Map<string, boolean> = new Map();
 
+  private dataApi: DataApiClient | undefined;
+
   constructor(
     private rateLimiter: RateLimiter,
     private cache: UnifiedCache,
@@ -328,6 +342,7 @@ export class TradingService {
     this.wallet = new Wallet(config.privateKey);
     this.chainId = (config.chainId || POLYGON_MAINNET) as Chain;
     this.credentials = config.credentials || null;
+    this.dataApi = config.dataApi;
   }
 
   // ============================================================================
@@ -591,6 +606,54 @@ export class TradingService {
           errorMsg: `Market order failed: ${error instanceof Error ? error.message : String(error)}`,
         };
       }
+    });
+  }
+
+  /**
+   * Clear position via market sell. Fetches size from Data API (tokenId持仓).
+   *
+   * Requires config.dataApi. Uses safeAddress (Builder) or wallet.address for position lookup.
+   *
+   * @param params - tokenId, price (with slippage applied), orderType
+   * @returns OrderResult
+   *
+   * @example
+   * ```typescript
+   * await sdk.tradingService.clearPosition({
+   *   tokenId,
+   *   price: bestBid * 0.95,  // 5% slippage
+   * });
+   * ```
+   */
+  async clearPosition(params: ClearPositionParams): Promise<OrderResult> {
+    const { tokenId, price, orderType = 'FOK' } = params;
+
+    if (!this.dataApi) {
+      return {
+        success: false,
+        errorMsg: 'clearPosition requires config.dataApi to fetch position size.',
+      };
+    }
+
+    const address = this.config.safeAddress || this.wallet.address;
+
+    let pos: { size: number } | null;
+    try {
+      pos = await this.dataApi.getPositionByTokenId(address, tokenId);
+    } catch (error) {
+      return {
+        success: false,
+        errorMsg: `Failed to fetch position: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    let size = pos?.size ?? 0; 
+    return this.createMarketOrder({
+      tokenId,
+      side: 'SELL',
+      amount: size,
+      price,
+      orderType,
     });
   }
 

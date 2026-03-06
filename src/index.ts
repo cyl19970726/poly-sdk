@@ -392,6 +392,7 @@ export type {
   ApiCredentials,
   LimitOrderParams,
   MarketOrderParams,
+  ClearPositionParams,
   // Results
   Order,
   OrderResult,
@@ -665,6 +666,7 @@ export class PolymarketSDK {
       credentials: config.creds,
       builderCreds: config.builderCreds,
       safeAddress: config.safeAddress,
+      dataApi: this.dataApi,
     });
 
     this.subgraph = new SubgraphClient(this.rateLimiter, this.cache);
