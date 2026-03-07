@@ -138,6 +138,13 @@ export interface SmartMoneyTrade {
   detectedAt?: number;
   /** 检测来源: polling (Data API) 或 mempool (WSS) */
   detectionSource?: 'polling' | 'mempool';
+
+  /** 实际跟单股数（仅跟单执行后填充） */
+  copySize?: number;
+  /** 实际跟单价格（仅跟单执行后填充） */
+  copyPrice?: number;
+  /** 实际跟单总价值 USDC（仅跟单执行后填充） */
+  copyValue?: number;
 }
 
 /**
@@ -1401,6 +1408,9 @@ export class SmartMoneyService {
       filteredByPrice: 0, // Phase 2
     };
 
+    // 打印所有options
+    this.debugLog('Copy', 'startAutoCopyTrading options', { options });    
+
     // Config
     const sizeScale = options.sizeScale ?? 0.1;
     const maxSizePerTrade = options.maxSizePerTrade ?? 50;
@@ -1445,19 +1455,12 @@ export class SmartMoneyService {
           if (exp == null || exp <= 0) return undefined;
           const now = Math.floor(Date.now() / 1000);
           const expiration = now + 300 + Math.max(90, exp);
+          this.debugLog('Copy', 'getGtdExpirationUnix', {
+            expirationUnix: expiration,
+            nowUnix: now,
+            secondsFromNow: expiration - now,
+          });
           return expiration;
-        };
-        const logGtdExpiration = (path: string, expiration: number | undefined, attempt?: number): void => {
-          if (expiration != null) {
-            const now = Math.floor(Date.now() / 1000);
-            this.debugLog('Copy', 'GTD expiration 实时计算 (at order placement)', {
-              path,
-              expirationUnix: expiration,
-              nowUnix: now,
-              secondsFromNow: expiration - now,
-              ...(attempt != null && { attempt }),
-            });
-          }
         };
 
         this.debugLog('Copy', 'Trade received', {
@@ -1570,6 +1573,14 @@ export class SmartMoneyService {
 
           const usdcAmount = copyValue; // Already calculated above
 
+          // 填充实际跟单字段，供 onTrade 回调、日志、推送使用
+          const newCopyPrice = orderMode === 'limit'
+            ? this.calculateLimitPrice(trade.side, trade.price, limitPriceOffset)
+            : slippagePrice;
+          trade.copySize = copySize;
+          trade.copyPrice = newCopyPrice;
+          trade.copyValue = copyValue;          
+
           // Pre-flight balance check (BUY only — check USDC collateral; SELL bypasses)
           if (!dryRun && !isSell) {
             try {
@@ -1638,7 +1649,6 @@ export class SmartMoneyService {
                 if (options.orderManager && splitCount === 1) {
                   // Single limit order via OrderManager — expiration 实时计算
                   const expiration = getGtdExpirationUnix();
-                  logGtdExpiration('OrderManager.placeOrder', expiration);
                   const handle = options.orderManager.placeOrder({
                     tokenId,
                     side: trade.side,
@@ -1699,7 +1709,6 @@ export class SmartMoneyService {
                   // Split orders (via createBatchOrders) — expiration 实时计算
                   try {
                     const expiration = limitOrderType === 'GTD' ? getGtdExpirationUnix() : undefined;
-                    logGtdExpiration('createSplitOrders', expiration, attempt);
                     const orders = this.createSplitOrders({
                       tokenId,
                       side: trade.side,
@@ -1722,7 +1731,6 @@ export class SmartMoneyService {
                 } else {
                   // Single limit order via TradingService — expiration 实时计算
                   const expiration = getGtdExpirationUnix();
-                  logGtdExpiration('TradingService.createLimitOrder', expiration, attempt);
                   result = await this.tradingService.createLimitOrder({
                     tokenId,
                     side: trade.side,
@@ -1760,7 +1768,7 @@ export class SmartMoneyService {
           // pm_tracker: SELL + insufficient position → retry with actual position size (clearPosition)
           if (!result.success && isSell && tokenId && this.isInsufficientPositionError(result.errorMsg)) {
             this.debugLog('Copy', 'SELL insufficient position, retrying with clearPosition', {
-              tokenId: tokenId.slice(0, 18) + '...',
+              tokenId: tokenId,
             });
             try {
               const retryResult = await this.tradingService.clearPosition({
@@ -1771,6 +1779,11 @@ export class SmartMoneyService {
               if (retryResult.success) {
                 result = retryResult;
                 console.log('[Copy Trading] SELL 持仓不足，已按实际持仓清仓成功');
+              } else {
+                this.debugLog('Copy', 'clearPosition failed', {
+                  errorMsg: retryResult.errorMsg,
+                });
+                result = { success: false, errorMsg: '持仓不足，平仓失败: ' + retryResult.errorMsg };
               }
             } catch (retryErr) {
               console.warn('[Copy Trading] retry clearPosition failed:', retryErr instanceof Error ? retryErr.message : retryErr);
@@ -1793,7 +1806,6 @@ export class SmartMoneyService {
               });
             }
           }
-
           options.onTrade?.(trade, result);
         } catch (error) {
           stats.tradesFailed++;
