@@ -1439,11 +1439,25 @@ export class SmartMoneyService {
       async (trade: SmartMoneyTrade) => {
         stats.tradesDetected++;
 
-        // GTD expiration: computed at order placement time (Polymarket requires ≥60s in future)
+        // GTD expiration: 每次下限价单时实时计算 (Polymarket requires ≥60s in future, use 90s buffer for async delay)
         const getGtdExpirationUnix = (): number | undefined => {
           const exp = options.gtdExpiration;
           if (exp == null || exp <= 0) return undefined;
-          return Math.floor(Date.now() / 1000) + Math.max(60, exp);
+          const now = Math.floor(Date.now() / 1000);
+          const expiration = now + 300 + Math.max(90, exp);
+          return expiration;
+        };
+        const logGtdExpiration = (path: string, expiration: number | undefined, attempt?: number): void => {
+          if (expiration != null) {
+            const now = Math.floor(Date.now() / 1000);
+            this.debugLog('Copy', 'GTD expiration 实时计算 (at order placement)', {
+              path,
+              expirationUnix: expiration,
+              nowUnix: now,
+              secondsFromNow: expiration - now,
+              ...(attempt != null && { attempt }),
+            });
+          }
         };
 
         this.debugLog('Copy', 'Trade received', {
@@ -1622,8 +1636,9 @@ export class SmartMoneyService {
                 const limitPrice = this.calculateLimitPrice(trade.side, trade.price, limitPriceOffset);
 
                 if (options.orderManager && splitCount === 1) {
-                  // Single limit order via OrderManager (with lifecycle tracking) — no retry (OrderManager manages lifecycle)
+                  // Single limit order via OrderManager — expiration 实时计算
                   const expiration = getGtdExpirationUnix();
+                  logGtdExpiration('OrderManager.placeOrder', expiration);
                   const handle = options.orderManager.placeOrder({
                     tokenId,
                     side: trade.side,
@@ -1681,8 +1696,10 @@ export class SmartMoneyService {
                   result = { success: true, orderId: handle.orderId };
                   break; // OrderManager path: no retry
                 } else if (splitCount > 1) {
-                  // Split orders (via createBatchOrders)
+                  // Split orders (via createBatchOrders) — expiration 实时计算
                   try {
+                    const expiration = limitOrderType === 'GTD' ? getGtdExpirationUnix() : undefined;
+                    logGtdExpiration('createSplitOrders', expiration, attempt);
                     const orders = this.createSplitOrders({
                       tokenId,
                       side: trade.side,
@@ -1692,7 +1709,7 @@ export class SmartMoneyService {
                       splitSpread,
                       limitPriceOffset,
                       orderType: limitOrderType,
-                      expiration: limitOrderType === 'GTD' ? getGtdExpirationUnix() : undefined,
+                      expiration,
                     });
 
                     result = await this.tradingService.createBatchOrders(orders);
@@ -1703,8 +1720,9 @@ export class SmartMoneyService {
                     };
                   }
                 } else {
-                  // Single limit order via TradingService directly (no OrderManager)
+                  // Single limit order via TradingService — expiration 实时计算
                   const expiration = getGtdExpirationUnix();
+                  logGtdExpiration('TradingService.createLimitOrder', expiration, attempt);
                   result = await this.tradingService.createLimitOrder({
                     tokenId,
                     side: trade.side,
