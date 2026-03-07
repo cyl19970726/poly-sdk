@@ -280,6 +280,8 @@ export interface SmartMoneyServiceConfig {
   cacheTtl?: number;
   /** QuickNode WSS URL for mempool pending TX detection */
   mempoolWssUrl?: string;
+  /** 调试日志模式，开启后打印跟单流程中的调试信息 (default: false) */
+  debug?: boolean;
 }
 
 // ============================================================================
@@ -805,7 +807,15 @@ export class SmartMoneyService {
       minPnl: config.minPnl ?? 1000,
       cacheTtl: config.cacheTtl ?? 300000,
       mempoolWssUrl: config.mempoolWssUrl ?? '',
+      debug: config.debug ?? false,
     };
+  }
+
+  /** 调试日志：仅当 config.debug 为 true 时输出 */
+  private debugLog(tag: string, message: string, data?: Record<string, unknown>): void {
+    if (!this.config.debug) return;
+    const payload = data ? ` ${JSON.stringify(data)}` : '';
+    console.log(`[SmartMoneyService:${tag}] ${message}${payload}`);
   }
 
   // ============================================================================
@@ -849,9 +859,15 @@ export class SmartMoneyService {
       this.lastCheckTimestamp = Math.max(start, now - OVERLAP_SECONDS);
 
       // 合并结果并按时间排序
-      return results
+      const activities = results
         .flat()
         .sort((a, b) => b.timestamp - a.timestamp);
+      this.debugLog('Poll', 'Fetched activities', {
+        walletCount: this.targetWallets.length,
+        totalActivities: activities.length,
+        lastCheckTimestamp: this.lastCheckTimestamp,
+      });
+      return activities;
     } catch (error) {
       console.error('[SmartMoneyService] Poll error:', error);
       return [];
@@ -865,6 +881,7 @@ export class SmartMoneyService {
   private activityToSmartMoneyTrade(activity: Activity): SmartMoneyTrade | null {
     const traderAddress = activity.proxyWallet?.toLowerCase();
     if (!traderAddress) {
+      this.debugLog('Poll', 'Skip activity: no proxyWallet', { txHash: activity.transactionHash?.slice(0, 18) });
       return null;
     }
 
@@ -905,12 +922,18 @@ export class SmartMoneyService {
       this.pollInterval = 10000; // 10秒
     }
 
+    this.debugLog('Poll', 'Started polling', {
+      intervalMs: this.pollInterval,
+      targetCount: this.targetWallets.length,
+    });
+
     this.pollIntervalId = setInterval(async () => {
       const activities = await this.pollTargetWallets();
 
       for (const activity of activities) {
         // 去重
         if (this.seenTxHashes.has(activity.transactionHash)) {
+          this.debugLog('Poll', 'Skip duplicate tx', { txHash: activity.transactionHash?.slice(0, 18) });
           continue;
         }
         this.seenTxHashes.add(activity.transactionHash);
@@ -928,6 +951,14 @@ export class SmartMoneyService {
         }
         trade.detectedAt = Date.now();
         trade.detectionSource = 'polling';
+
+        this.debugLog('Poll', 'Trade detected', {
+          trader: trade.traderAddress.slice(0, 10) + '...',
+          side: trade.side,
+          size: trade.size.toFixed(2),
+          price: trade.price.toFixed(4),
+          txHash: trade.txHash?.slice(0, 18),
+        });
 
         // 通知所有 handlers
         for (const handler of this.tradeHandlers) {
@@ -976,7 +1007,7 @@ export class SmartMoneyService {
       this.mempoolTargetAddresses.add(addr.toLowerCase());
     }
 
-    console.log('[SmartMoneyService] Starting Mempool v2 WSS monitor', {
+    this.debugLog('Mempool', 'Starting WSS monitor', {
       wssUrl: wssUrl.slice(0, 30) + '...',
       targets: this.mempoolTargetAddresses.size,
     });
@@ -985,7 +1016,7 @@ export class SmartMoneyService {
     this.mempoolWs = ws;
 
     ws.on('open', () => {
-      console.log('[SmartMoneyService] Mempool WSS connected, subscribing to newPendingTransactions');
+      this.debugLog('Mempool', 'WSS connected, subscribing to newPendingTransactions');
       ws.send(
         JSON.stringify({
           jsonrpc: '2.0',
@@ -1022,7 +1053,7 @@ export class SmartMoneyService {
 
       // Subscription confirmation
       if (msg.id === 1 && msg.result) {
-        console.log('[SmartMoneyService] Mempool subscription confirmed', { subscriptionId: msg.result });
+        this.debugLog('Mempool', 'Subscription confirmed', { subscriptionId: msg.result });
         return;
       }
 
@@ -1044,7 +1075,10 @@ export class SmartMoneyService {
       if (!targetTrader) return;
 
       // Dedup: check if we've already seen this txHash
-      if (tx.hash && this.seenTxHashes.has(tx.hash)) return;
+      if (tx.hash && this.seenTxHashes.has(tx.hash)) {
+        this.debugLog('Mempool', 'Dedup: skip seen tx', { txHash: tx.hash?.slice(0, 18) });
+        return;
+      }
       if (tx.hash) {
         this.seenTxHashes.add(tx.hash);
         // Prune old hashes
@@ -1085,7 +1119,7 @@ export class SmartMoneyService {
       }
 
       const latency = Date.now() - t0;
-      console.log('[SmartMoneyService] Mempool detection', {
+      this.debugLog('Mempool', 'Trade detected', {
         trader: targetTrader.slice(0, 10) + '...',
         txHash: tx.hash?.slice(0, 18) + '...',
         side: targetOrder.side === OrderSide.BUY ? 'BUY' : 'SELL',
@@ -1233,17 +1267,27 @@ export class SmartMoneyService {
       if (options.filterAddresses && options.filterAddresses.length > 0) {
         const normalized = options.filterAddresses.map(a => a.toLowerCase());
         if (!normalized.includes(trade.traderAddress.toLowerCase())) {
+          this.debugLog('Subscribe', 'Filtered: address not in filterAddresses', {
+            trader: trade.traderAddress.slice(0, 10) + '...',
+          });
           return;
         }
       }
 
       // Size filter
       if (options.minSize && trade.size < options.minSize) {
+        this.debugLog('Subscribe', 'Filtered: size below minSize', {
+          size: trade.size,
+          minSize: options.minSize,
+        });
         return;
       }
 
       // Smart Money filter
       if (options.smartMoneyOnly && !trade.isSmartMoney) {
+        this.debugLog('Subscribe', 'Filtered: not smart money', {
+          trader: trade.traderAddress.slice(0, 10) + '...',
+        });
         return;
       }
 
@@ -1263,6 +1307,12 @@ export class SmartMoneyService {
 
     // 按 detectionMode 启动检测
     const mode = options.detectionMode ?? 'polling';
+    this.debugLog('Subscribe', 'Subscribed', {
+      mode,
+      filterAddresses: options.filterAddresses?.length ?? 0,
+      minSize: options.minSize,
+      smartMoneyOnly: options.smartMoneyOnly,
+    });
     if (mode === 'dual') {
       console.log('[SmartMoneyService] Dual detection: mempool (primary) + polling (fallback)');
       this.startMempoolMonitor();
@@ -1381,14 +1431,35 @@ export class SmartMoneyService {
       return Math.floor(Date.now() / 1000) + exp;
     })();
 
+    this.debugLog('Copy', 'startAutoCopyTrading started', {
+      targetCount: targetAddresses.length,
+      targets: targetAddresses.map(a => a.slice(0, 10) + '...'),
+      sizeScale,
+      maxSizePerTrade,
+      minTradeSize,
+      orderMode,
+      detectionMode: options.detectionMode ?? 'polling',
+    });
+
     // Subscribe
     const subscription = this.subscribeSmartMoneyTrades(
       async (trade: SmartMoneyTrade) => {
         stats.tradesDetected++;
+        this.debugLog('Copy', 'Trade received', {
+          tradesDetected: stats.tradesDetected,
+          trader: trade.traderAddress.slice(0, 10) + '...',
+          side: trade.side,
+          size: trade.size.toFixed(2),
+          price: trade.price.toFixed(4),
+          source: trade.detectionSource,
+        });
 
         try {
           // Check target
           if (!targetAddresses.includes(trade.traderAddress.toLowerCase())) {
+            this.debugLog('Copy', 'Skip: trader not in targetAddresses', {
+              trader: trade.traderAddress.slice(0, 10) + '...',
+            });
             return;
           }
 
@@ -1399,11 +1470,19 @@ export class SmartMoneyService {
             const tradeValue = trade.size * trade.price;
             if (tradeValue < minTradeSize) {
               stats.tradesSkipped++;
+              this.debugLog('Copy', 'Skip: tradeValue below minTradeSize', {
+                tradeValue: tradeValue.toFixed(2),
+                minTradeSize,
+              });
               return;
             }
 
             if (sideFilter && trade.side !== sideFilter) {
               stats.tradesSkipped++;
+              this.debugLog('Copy', 'Skip: sideFilter mismatch', {
+                side: trade.side,
+                sideFilter,
+              });
               return;
             }
 
@@ -1413,6 +1492,11 @@ export class SmartMoneyService {
               if (trade.price < min || trade.price > max) {
                 stats.tradesSkipped++;
                 stats.filteredByPrice = (stats.filteredByPrice || 0) + 1;
+                this.debugLog('Copy', 'Skip: price outside priceRange', {
+                  price: trade.price.toFixed(4),
+                  min,
+                  max,
+                });
                 return;
               }
             }
@@ -1420,6 +1504,9 @@ export class SmartMoneyService {
             // Custom trade filter
             if (options.tradeFilter && !options.tradeFilter(trade)) {
               stats.tradesSkipped++;
+              this.debugLog('Copy', 'Skip: tradeFilter returned false', {
+                trader: trade.traderAddress.slice(0, 10) + '...',
+              });
               return;
             }
           }
@@ -1439,11 +1526,15 @@ export class SmartMoneyService {
           const MIN_ORDER_SIZE = 1;
           if (copyValue < MIN_ORDER_SIZE) {
             stats.tradesSkipped++;
+            this.debugLog('Copy', 'Skip: copyValue below MIN_ORDER_SIZE ($1)', {
+              copyValue: copyValue.toFixed(2),
+            });
             return;
           }
 
           // Delay
           if (delay > 0) {
+            this.debugLog('Copy', 'Delay before order', { delayMs: delay });
             await new Promise(resolve => setTimeout(resolve, delay));
           }
 
@@ -1451,6 +1542,9 @@ export class SmartMoneyService {
           const tokenId = trade.tokenId;
           if (!tokenId) {
             stats.tradesSkipped++;
+            this.debugLog('Copy', 'Skip: no tokenId (mempool detection may lack tokenId)', {
+              trader: trade.traderAddress.slice(0, 10) + '...',
+            });
             return;
           }
 
@@ -1467,6 +1561,10 @@ export class SmartMoneyService {
               const { balance } = await this.tradingService.getBalanceAllowance('COLLATERAL');
               const availableUsdc = parseFloat(balance) / 1e6; // USDC has 6 decimals
               if (availableUsdc < usdcAmount) {
+                this.debugLog('Copy', 'Skip: insufficient balance', {
+                  required: usdcAmount.toFixed(2),
+                  available: availableUsdc.toFixed(2),
+                });
                 console.warn(`[Copy Trading] 余额不足: 需要 $${usdcAmount.toFixed(2)}，可用 $${availableUsdc.toFixed(2)}，跳过此交易`);
                 stats.tradesSkipped++;
                 return;
@@ -1482,6 +1580,9 @@ export class SmartMoneyService {
               const shouldProceed = await options.preOrderCheck(trade);
               if (!shouldProceed) {
                 stats.tradesSkipped++;
+                this.debugLog('Copy', 'Skip: preOrderCheck returned false', {
+                  trader: trade.traderAddress.slice(0, 10) + '...',
+                });
                 return;
               }
             } catch (checkErr) {
@@ -1492,6 +1593,16 @@ export class SmartMoneyService {
 
           // Execute
           let result: OrderResult = { success: false, errorMsg: 'Order not executed' };
+
+          this.debugLog('Copy', 'Executing order', {
+            side: trade.side,
+            copySize: copySize.toFixed(2),
+            copyValue: usdcAmount.toFixed(2),
+            orderMode,
+            limitPrice: orderMode === 'limit' ? this.calculateLimitPrice(trade.side, trade.price, limitPriceOffset).toFixed(4) : undefined,
+            slippagePrice: orderMode === 'market' ? slippagePrice.toFixed(4) : undefined,
+            splitCount: orderMode === 'limit' ? splitCount : undefined,
+          });
 
           if (dryRun) {
             result = { success: true, orderId: `dry_run_${Date.now()}` };
@@ -1530,12 +1641,20 @@ export class SmartMoneyService {
                     .onFilled((fill: any) => {
                       stats.tradesExecuted++;
                       stats.totalUsdcSpent += copyValue;
+                      this.debugLog('Copy', 'OrderManager order filled', {
+                        orderId: handle.orderId,
+                        copyValue: copyValue.toFixed(2),
+                      });
                       if (options.onOrderFilled) {
                         options.onOrderFilled(fill);
                       }
                     })
                     .onRejected(async (reason: string) => {
                       stats.tradesFailed++;
+                      this.debugLog('Copy', 'OrderManager order rejected', {
+                        orderId: handle.orderId,
+                        reason,
+                      });
                       console.warn('[Copy Trading] Order rejected:', reason);
                       // pm_tracker: SELL + insufficient position → retry with actual position (clearPosition)
                       if (isSell && tokenId && this.isInsufficientPositionError(reason)) {
@@ -1606,6 +1725,12 @@ export class SmartMoneyService {
               // Retry logic: break on success or last attempt
               if (result.success || attempt >= retryCount) break;
 
+              this.debugLog('Copy', 'Order failed, retrying', {
+                attempt: attempt + 1,
+                retryCount,
+                retryDelayMs: retryDelay,
+                errorMsg: result.errorMsg,
+              });
               console.log(`[Copy Trading] 下单失败，${retryDelay}ms 后重试 (${attempt + 1}/${retryCount}): ${result.errorMsg ?? 'unknown error'}`);
               await new Promise(r => setTimeout(r, retryDelay));
             }
@@ -1613,6 +1738,9 @@ export class SmartMoneyService {
 
           // pm_tracker: SELL + insufficient position → retry with actual position size (clearPosition)
           if (!result.success && isSell && tokenId && this.isInsufficientPositionError(result.errorMsg)) {
+            this.debugLog('Copy', 'SELL insufficient position, retrying with clearPosition', {
+              tokenId: tokenId.slice(0, 18) + '...',
+            });
             try {
               const retryResult = await this.tradingService.clearPosition({
                 tokenId,
@@ -1633,8 +1761,15 @@ export class SmartMoneyService {
             if (result.success) {
               stats.tradesExecuted++;
               stats.totalUsdcSpent += usdcAmount;
+              this.debugLog('Copy', 'Order success', {
+                orderId: result.orderId,
+                copyValue: usdcAmount.toFixed(2),
+              });
             } else {
               stats.tradesFailed++;
+              this.debugLog('Copy', 'Order failed', {
+                errorMsg: result.errorMsg,
+              });
             }
           }
 
@@ -2918,7 +3053,12 @@ export class SmartMoneyService {
       throw new Error(`Split order size (${sizePerOrder}) below minimum (${MIN_SHARES} shares). Total: ${totalSize}, split: ${effectiveSplitCount}`);
     }
     if (effectiveSplitCount < splitCount) {
-      console.log(`[SmartMoney] Split count auto-reduced: ${splitCount} → ${effectiveSplitCount} (totalSize=${totalSize}, min=${MIN_SHARES}/order)`);
+      this.debugLog('Copy', 'Split count auto-reduced', {
+        original: splitCount,
+        effective: effectiveSplitCount,
+        totalSize,
+        minPerOrder: MIN_SHARES,
+      });
     }
 
     const baseLimitPrice = this.calculateLimitPrice(side, basePrice, limitPriceOffset);
