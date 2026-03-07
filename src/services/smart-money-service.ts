@@ -1424,13 +1424,6 @@ export class SmartMoneyService {
     const retryCount = options.retryCount ?? 3;
     const retryDelay = options.retryDelay ?? 1000;
 
-    // GTD expiration: remaining seconds → unix timestamp
-    const gtdExpirationUnix = (() => {
-      const exp = options.gtdExpiration;
-      if (exp == null || exp <= 0) return undefined;
-      return Math.floor(Date.now() / 1000) + exp;
-    })();
-
     this.debugLog('Copy', 'startAutoCopyTrading started', {
       targetCount: targetAddresses.length,
       targets: targetAddresses.map(a => a.slice(0, 10) + '...'),
@@ -1445,6 +1438,14 @@ export class SmartMoneyService {
     const subscription = this.subscribeSmartMoneyTrades(
       async (trade: SmartMoneyTrade) => {
         stats.tradesDetected++;
+        // GTD expiration: remaining seconds → unix timestamp
+        const gtdExpirationUnix = (() => {
+          const exp = options.gtdExpiration;
+          if (exp == null || exp <= 0) return undefined;
+          return Math.floor(Date.now() / 1000) + exp;
+        })();
+
+
         this.debugLog('Copy', 'Trade received', {
           tradesDetected: stats.tradesDetected,
           trader: trade.traderAddress.slice(0, 10) + '...',
@@ -1452,6 +1453,7 @@ export class SmartMoneyService {
           size: trade.size.toFixed(2),
           price: trade.price.toFixed(4),
           source: trade.detectionSource,
+          gtdExpirationUnix,
         });
 
         try {
