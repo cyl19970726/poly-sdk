@@ -282,6 +282,18 @@ export interface PolySDKOptions {
    * Derive via RelayerService.getSafeAddress() or deploy via RelayerService.deploySafe().
    */
   safeAddress?: string;
+
+  /**
+   * Enable debug logging for SmartMoneyService (copy trading flow).
+   * When true, prints detailed logs for polling, mempool detection, filters, and order execution.
+   * Default: false.
+   */
+  smartMoneyDebug?: boolean;
+
+  /**
+   * Alias for smartMoneyDebug. Use either smartMoneyDebug or debug.
+   */
+  debug?: boolean;
 }
 
 // K-Line interval types
