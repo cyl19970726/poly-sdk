@@ -138,7 +138,6 @@ export interface SmartMoneyTrade {
   detectedAt?: number;
   /** 检测来源: polling (Data API) 或 mempool (WSS) */
   detectionSource?: 'polling' | 'mempool';
-
   /** 实际跟单股数（仅跟单执行后填充） */
   copySize?: number;
   /** 实际跟单价格（仅跟单执行后填充） */

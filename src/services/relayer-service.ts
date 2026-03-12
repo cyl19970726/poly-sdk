@@ -24,6 +24,7 @@ import { BuilderConfig } from '@polymarket/builder-signing-sdk';
 import { ethers, Wallet, BigNumber } from 'ethers';
 import {
   CTF_CONTRACT,
+  NEG_RISK_ADAPTER,
   USDC_CONTRACT,
   USDC_DECIMALS,
 } from '../clients/ctf-client.js';
@@ -367,7 +368,7 @@ export class RelayerService {
    * }
    * ```
    */
-  async split(conditionId: string, amount: string): Promise<RelayerResult> {
+  async split(conditionId: string, amount: string, isNegRisk = false): Promise<RelayerResult> {
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
     const ctfInterface = new ethers.utils.Interface(CTF_ABI);
 
@@ -379,9 +380,11 @@ export class RelayerService {
       amountWei,
     ]);
 
+    const to = isNegRisk ? NEG_RISK_ADAPTER : CTF_CONTRACT;
+
     try {
       const response = await this.relayClient.execute([{
-        to: CTF_CONTRACT,
+        to,
         value: '0',
         data,
       }]);
@@ -414,7 +417,7 @@ export class RelayerService {
    * @param amount - Number of token pairs to merge (e.g., "100" for 100 YES + 100 NO)
    * @returns RelayerResult with transaction status
    */
-  async merge(conditionId: string, amount: string): Promise<RelayerResult> {
+  async merge(conditionId: string, amount: string, isNegRisk = false): Promise<RelayerResult> {
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
     const ctfInterface = new ethers.utils.Interface(CTF_ABI);
 
@@ -426,9 +429,11 @@ export class RelayerService {
       amountWei,
     ]);
 
+    const to = isNegRisk ? NEG_RISK_ADAPTER : CTF_CONTRACT;
+
     try {
       const response = await this.relayClient.execute([{
-        to: CTF_CONTRACT,
+        to,
         value: '0',
         data,
       }]);
