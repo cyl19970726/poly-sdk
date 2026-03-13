@@ -466,7 +466,7 @@ export class RelayerService {
    * @param outcome - Winning outcome ('YES' or 'NO')
    * @returns RelayerResult with transaction status
    */
-  async redeem(conditionId: string, outcome: 'YES' | 'NO'): Promise<RelayerResult> {
+  async redeem(conditionId: string, outcome: 'YES' | 'NO', isNegRisk = false): Promise<RelayerResult> {
     const indexSets = outcome === 'YES' ? [1] : [2];
     const ctfInterface = new ethers.utils.Interface(CTF_ABI);
 
@@ -477,9 +477,11 @@ export class RelayerService {
       indexSets,
     ]);
 
+    const to = isNegRisk ? NEG_RISK_ADAPTER : CTF_CONTRACT;
+
     try {
       const response = await this.relayClient.execute([{
-        to: CTF_CONTRACT,
+        to,
         value: '0',
         data,
       }]);
@@ -511,18 +513,18 @@ export class RelayerService {
    * @param redeems - Array of { conditionId, outcome } to redeem
    * @returns RelayerResult with transaction status
    */
-  async redeemBatch(redeems: Array<{ conditionId: string; outcome: 'YES' | 'NO' }>): Promise<RelayerResult> {
+  async redeemBatch(redeems: Array<{ conditionId: string; outcome: 'YES' | 'NO'; isNegRisk?: boolean }>): Promise<RelayerResult> {
     if (redeems.length === 0) {
       return { success: true };
     }
 
     // Single redeem — use simple path
     if (redeems.length === 1) {
-      return this.redeem(redeems[0].conditionId, redeems[0].outcome);
+      return this.redeem(redeems[0].conditionId, redeems[0].outcome, redeems[0].isNegRisk);
     }
 
     const ctfInterface = new ethers.utils.Interface(CTF_ABI);
-    const transactions = redeems.map(({ conditionId, outcome }) => {
+    const transactions = redeems.map(({ conditionId, outcome, isNegRisk }) => {
       const indexSets = outcome === 'YES' ? [1] : [2];
       const data = ctfInterface.encodeFunctionData('redeemPositions', [
         USDC_CONTRACT,
@@ -530,7 +532,8 @@ export class RelayerService {
         conditionId,
         indexSets,
       ]);
-      return { to: CTF_CONTRACT, value: '0', data };
+      const to = isNegRisk ? NEG_RISK_ADAPTER : CTF_CONTRACT;
+      return { to, value: '0', data };
     });
 
     return this.executeBatch(transactions);
