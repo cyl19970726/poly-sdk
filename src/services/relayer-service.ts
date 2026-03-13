@@ -506,6 +506,37 @@ export class RelayerService {
   }
 
   /**
+   * Batch redeem multiple winning positions in a single relayer call (gasless)
+   *
+   * @param redeems - Array of { conditionId, outcome } to redeem
+   * @returns RelayerResult with transaction status
+   */
+  async redeemBatch(redeems: Array<{ conditionId: string; outcome: 'YES' | 'NO' }>): Promise<RelayerResult> {
+    if (redeems.length === 0) {
+      return { success: true };
+    }
+
+    // Single redeem — use simple path
+    if (redeems.length === 1) {
+      return this.redeem(redeems[0].conditionId, redeems[0].outcome);
+    }
+
+    const ctfInterface = new ethers.utils.Interface(CTF_ABI);
+    const transactions = redeems.map(({ conditionId, outcome }) => {
+      const indexSets = outcome === 'YES' ? [1] : [2];
+      const data = ctfInterface.encodeFunctionData('redeemPositions', [
+        USDC_CONTRACT,
+        ethers.constants.HashZero,
+        conditionId,
+        indexSets,
+      ]);
+      return { to: CTF_CONTRACT, value: '0', data };
+    });
+
+    return this.executeBatch(transactions);
+  }
+
+  /**
    * Execute a batch of generic transactions via Relayer (gasless)
    *
    * @param transactions - Array of transactions to execute
