@@ -83,6 +83,10 @@ const CTF_ABI = [
   'function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets) external',
 ];
 
+const NEG_RISK_ADAPTER_ABI = [
+  'function redeemPositions(bytes32 conditionId, uint256[] amounts) external',
+];
+
 const ERC20_ABI = [
   'function approve(address spender, uint256 amount) returns (bool)',
   'function transfer(address to, uint256 amount) returns (bool)',
@@ -467,17 +471,32 @@ export class RelayerService {
    * @returns RelayerResult with transaction status
    */
   async redeem(conditionId: string, outcome: 'YES' | 'NO', isNegRisk = false): Promise<RelayerResult> {
-    const indexSets = outcome === 'YES' ? [1] : [2];
-    const ctfInterface = new ethers.utils.Interface(CTF_ABI);
+    let data: string;
+    let to: string;
 
-    const data = ctfInterface.encodeFunctionData('redeemPositions', [
-      USDC_CONTRACT,
-      ethers.constants.HashZero,
-      conditionId,
-      indexSets,
-    ]);
-
-    const to = isNegRisk ? NEG_RISK_ADAPTER : CTF_CONTRACT;
+    if (isNegRisk) {
+      // NegRisk adapter: redeemPositions(conditionId, amounts[])
+      // amounts = [yesAmount, noAmount] — use MaxUint256 to redeem all
+      const negRiskInterface = new ethers.utils.Interface(NEG_RISK_ADAPTER_ABI);
+      const maxAmount = ethers.constants.MaxUint256;
+      // outcome determines which index has tokens: YES=index0, NO=index1
+      const amounts = outcome === 'YES'
+        ? [maxAmount, BigNumber.from(0)]
+        : [BigNumber.from(0), maxAmount];
+      data = negRiskInterface.encodeFunctionData('redeemPositions', [conditionId, amounts]);
+      to = NEG_RISK_ADAPTER;
+    } else {
+      // Standard CTF: redeemPositions(collateral, parentCollectionId, conditionId, indexSets)
+      const indexSets = outcome === 'YES' ? [1] : [2];
+      const ctfInterface = new ethers.utils.Interface(CTF_ABI);
+      data = ctfInterface.encodeFunctionData('redeemPositions', [
+        USDC_CONTRACT,
+        ethers.constants.HashZero,
+        conditionId,
+        indexSets,
+      ]);
+      to = CTF_CONTRACT;
+    }
 
     try {
       const response = await this.relayClient.execute([{
@@ -524,15 +543,27 @@ export class RelayerService {
     }
 
     const ctfInterface = new ethers.utils.Interface(CTF_ABI);
+    const negRiskInterface = new ethers.utils.Interface(NEG_RISK_ADAPTER_ABI);
     const transactions = redeems.map(({ conditionId, outcome, isNegRisk }) => {
-      const indexSets = outcome === 'YES' ? [1] : [2];
-      const data = ctfInterface.encodeFunctionData('redeemPositions', [
-        USDC_CONTRACT,
-        ethers.constants.HashZero,
-        conditionId,
-        indexSets,
-      ]);
-      const to = isNegRisk ? NEG_RISK_ADAPTER : CTF_CONTRACT;
+      let data: string;
+      let to: string;
+      if (isNegRisk) {
+        const maxAmount = ethers.constants.MaxUint256;
+        const amounts = outcome === 'YES'
+          ? [maxAmount, BigNumber.from(0)]
+          : [BigNumber.from(0), maxAmount];
+        data = negRiskInterface.encodeFunctionData('redeemPositions', [conditionId, amounts]);
+        to = NEG_RISK_ADAPTER;
+      } else {
+        const indexSets = outcome === 'YES' ? [1] : [2];
+        data = ctfInterface.encodeFunctionData('redeemPositions', [
+          USDC_CONTRACT,
+          ethers.constants.HashZero,
+          conditionId,
+          indexSets,
+        ]);
+        to = CTF_CONTRACT;
+      }
       return { to, value: '0', data };
     });
 

@@ -803,6 +803,11 @@ export class SmartMoneyService {
   // Mempool 相关
   private mempoolWs: WebSocket | null = null;
   private mempoolTargetAddresses: Set<string> = new Set();
+  private mempoolMsgCount = 0;
+  private mempoolRouterHits = 0;
+  private mempoolMatchOrdersHits = 0;
+  private mempoolTargetHits = 0;
+  private mempoolLastStatLog = 0;
 
   constructor(
     walletService: WalletService,
@@ -1005,19 +1010,29 @@ export class SmartMoneyService {
    * Ported from strategy-impl/src/copy-trading/wallet-monitor.ts
    */
   private startMempoolMonitor(): void {
-    if (this.mempoolWs) {
-      return; // Already connected
-    }
-
     const wssUrl = this.config.mempoolWssUrl;
     if (!wssUrl) {
       console.warn('[SmartMoneyService] Mempool WSS URL not configured, skipping mempool monitor');
       return;
     }
 
-    // Sync target addresses
+    // Always sync target addresses (even if WS already connected)
+    const prevSize = this.mempoolTargetAddresses.size;
     for (const addr of this.targetWallets) {
       this.mempoolTargetAddresses.add(addr.toLowerCase());
+    }
+    if (this.mempoolTargetAddresses.size > prevSize) {
+      console.log('[SmartMoneyService] Mempool targets updated', {
+        prev: prevSize,
+        now: this.mempoolTargetAddresses.size,
+        newAddrs: Array.from(this.targetWallets)
+          .filter(a => !this.mempoolTargetAddresses.has(a.toLowerCase()) || this.mempoolTargetAddresses.size > prevSize)
+          .map(a => a.slice(0, 10) + '...'),
+      });
+    }
+
+    if (this.mempoolWs) {
+      return; // WS already connected, targets synced above
     }
 
     this.debugLog('Mempool', 'Starting WSS monitor', {
@@ -1073,10 +1088,35 @@ export class SmartMoneyService {
       // New pending TX
       if (!msg.params?.result) return;
       const tx = msg.params.result;
+      this.mempoolMsgCount++;
+
+      // Periodic stats log (every 60s)
+      if (t0 - this.mempoolLastStatLog > 60_000) {
+        console.log('[SmartMoneyService] Mempool stats', {
+          totalMsgs: this.mempoolMsgCount,
+          routerHits: this.mempoolRouterHits,
+          matchOrdersHits: this.mempoolMatchOrdersHits,
+          targetHits: this.mempoolTargetHits,
+          targets: Array.from(this.mempoolTargetAddresses).map(a => a.slice(0, 10) + '...'),
+          hasTxInput: typeof tx.input === 'string',
+          txType: typeof tx === 'string' ? 'hash-only' : 'full-object',
+        });
+        this.mempoolLastStatLog = t0;
+      }
+
+      // If tx is just a hash string (not full object), log and skip
+      if (typeof tx === 'string') {
+        if (this.mempoolMsgCount <= 3) {
+          console.warn('[SmartMoneyService] Mempool returned hash-only (not full TX object)', { hash: tx.slice(0, 20) });
+        }
+        return;
+      }
 
       // Fast local filter: is settlement TX? (99%+ filtered out here)
       if (!tx.to || !ROUTER_ADDRESSES.has(tx.to.toLowerCase())) return;
+      this.mempoolRouterHits++;
       if (!tx.input || !tx.input.startsWith(MATCH_ORDERS_SELECTOR)) return;
+      this.mempoolMatchOrdersHits++;
 
       // Decode calldata
       const decoded = decodeMatchOrdersCalldata(tx.input);
@@ -1085,7 +1125,17 @@ export class SmartMoneyService {
       // Extract trader addresses and match against targets
       const traders = extractTraderAddresses(decoded);
       const targetTrader = traders.find((addr: string) => this.mempoolTargetAddresses.has(addr));
-      if (!targetTrader) return;
+      if (!targetTrader) {
+        // Log first few non-matching router TXs to see who IS trading
+        if (this.mempoolMatchOrdersHits <= 10) {
+          console.log('[SmartMoneyService] Mempool matchOrders (not our target)', {
+            traders: traders.map((a: string) => a.slice(0, 10) + '...'),
+            txHash: tx.hash?.slice(0, 18) + '...',
+          });
+        }
+        return;
+      }
+      this.mempoolTargetHits++;
 
       // Dedup: check if we've already seen this txHash
       if (tx.hash && this.seenTxHashes.has(tx.hash)) {
