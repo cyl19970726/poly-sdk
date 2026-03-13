@@ -527,6 +527,53 @@ export class RelayerService {
   }
 
   /**
+   * Redeem negRisk positions with actual token amounts (gasless)
+   *
+   * @param conditionId - Market condition ID
+   * @param outcome - Our outcome ('YES' or 'NO')
+   * @param size - Number of tokens to redeem (decimal, e.g. 26.315788)
+   * @returns RelayerResult with transaction status
+   */
+  async redeemNegRisk(conditionId: string, outcome: 'YES' | 'NO', size: number): Promise<RelayerResult> {
+    const negRiskInterface = new ethers.utils.Interface(NEG_RISK_ADAPTER_ABI);
+    // CTF tokens use 6 decimals
+    const amountWei = ethers.utils.parseUnits(size.toFixed(6), 6);
+    // amounts = [yesAmount, noAmount]
+    const amounts = outcome === 'YES'
+      ? [amountWei, BigNumber.from(0)]
+      : [BigNumber.from(0), amountWei];
+
+    const data = negRiskInterface.encodeFunctionData('redeemPositions', [conditionId, amounts]);
+
+    try {
+      const response = await this.relayClient.execute([{
+        to: NEG_RISK_ADAPTER,
+        value: '0',
+        data,
+      }]);
+
+      const tx = await response.wait();
+
+      if (!tx || tx.state === RelayerState.FAILED) {
+        return {
+          success: false,
+          errorMessage: `Redeem failed: ${tx?.state || 'No transaction'}`,
+        };
+      }
+
+      return {
+        success: true,
+        txHash: tx.transactionHash,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
    * Batch redeem multiple winning positions in a single relayer call (gasless)
    *
    * @param redeems - Array of { conditionId, outcome } to redeem
