@@ -584,13 +584,17 @@ export class TradingService {
           orderType
         );
 
+        // FOK orders: clob-client may return orderID with success=undefined when order was
+        // accepted but not filled. Only trust explicit success=true.
+        // For non-FOK orders, having an orderID or transaction hash also indicates success.
+        const isFokOrder = params.orderType !== 'FAK'; // default is FOK
         const success = result.success === true ||
-          (result.success !== false &&
+          (!isFokOrder && result.success !== false &&
             ((result.orderID !== undefined && result.orderID !== '') ||
               (result.transactionsHashes !== undefined && result.transactionsHashes.length > 0)));
 
         const errorMsg = !success
-          ? (result.errorMsg || `Market order rejected (status: ${result.status ?? 'unknown'}, response: ${JSON.stringify(result)})`)
+          ? (result.errorMsg || `Market order ${isFokOrder ? 'FOK not filled' : 'rejected'} (status: ${result.status ?? 'unknown'}, orderID: ${result.orderID ?? 'none'})`)
           : result.errorMsg;
 
         return {

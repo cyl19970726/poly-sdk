@@ -1816,14 +1816,36 @@ export class SmartMoneyService {
                   });
                 }
               } else {
-                // Market Order path (via TradingService)
-                result = await this.tradingService.createMarketOrder({
-                  tokenId,
-                  side: trade.side,
-                  amount: usdcAmount,
-                  price: slippagePrice,
-                  orderType: marketOrderType,
-                });
+                // Market Order path
+                if (options.orderManager) {
+                  // Via OrderManager — awaits real terminal state (filled/cancelled)
+                  // This prevents FOK ghost positions: OrderManager detects CANCELLED via WebSocket/polling
+                  const handle = options.orderManager.placeMarketOrder({
+                    tokenId,
+                    side: trade.side,
+                    amount: usdcAmount,
+                    price: slippagePrice,
+                    orderType: marketOrderType,
+                  });
+                  const finalResult = await handle;
+                  result = {
+                    success: finalResult.status === 'filled',
+                    orderId: handle.orderId,
+                    errorMsg: finalResult.status !== 'filled'
+                      ? `FOK ${finalResult.status}: ${finalResult.reason || 'not filled'}`
+                      : undefined,
+                  };
+                  if (finalResult.status !== 'filled') break; // No retry for OrderManager path
+                } else {
+                  // Fallback: direct TradingService (no lifecycle tracking)
+                  result = await this.tradingService.createMarketOrder({
+                    tokenId,
+                    side: trade.side,
+                    amount: usdcAmount,
+                    price: slippagePrice,
+                    orderType: marketOrderType,
+                  });
+                }
               }
 
               // Retry logic: break on success or last attempt
