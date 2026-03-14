@@ -258,9 +258,9 @@ export class RealtimeServiceV2 extends EventEmitter {
   private cryptoClient: RealTimeDataClient | null = null;
   private config: RealtimeServiceConfig;
 
-  // Store crypto subscriptions for reconnect replay
-  private cryptoBinanceSymbols: Set<string> = new Set();
-  private cryptoChainlinkSymbols: Set<string> = new Set();
+  // Store crypto subscriptions for reconnect replay (reference-counted)
+  private cryptoBinanceSymbols: Map<string, number> = new Map();
+  private cryptoChainlinkSymbols: Map<string, number> = new Map();
   private subscriptions: Map<string, Subscription> = new Map();
   private subscriptionIdCounter = 0;
   private connected = false;
@@ -422,6 +422,31 @@ export class RealtimeServiceV2 extends EventEmitter {
       this.log('Force reconnecting market channel...');
       this.client.forceReconnect();
     }
+  }
+
+  /**
+   * Force reconnect the crypto (LIVE_DATA) channel WebSocket.
+   * Terminates the current connection and triggers auto-reconnect,
+   * which will re-subscribe to all Binance + Chainlink symbols via handleCryptoConnect().
+   *
+   * Use when individual symbol subscriptions stop receiving data
+   * but the TCP connection appears alive (ping/pong still works).
+   * This is the known "subscription-level silent drop" failure mode
+   * of the Polymarket LIVE_DATA WebSocket.
+   */
+  forceReconnectCrypto(): void {
+    if (this.cryptoClient) {
+      this.log('Force reconnecting crypto (LIVE_DATA) channel...');
+      this.cryptoClient.forceReconnect();
+    }
+  }
+
+  /**
+   * Get crypto client connection status.
+   * Returns false if the crypto client is disconnected, reconnecting, or null.
+   */
+  isCryptoConnected(): boolean {
+    return this.cryptoConnected && this.cryptoClient !== null;
   }
 
   /**
@@ -799,12 +824,16 @@ export class RealtimeServiceV2 extends EventEmitter {
   subscribeCryptoPrices(symbols: string[], handlers: CryptoPriceHandlers = {}): Subscription {
     const subId = `crypto_${++this.subscriptionIdCounter}`;
 
-    // Store symbols for reconnect replay
-    for (const s of symbols) this.cryptoBinanceSymbols.add(s);
+    // Reference-counted subscribe: only send WebSocket subscribe for NEW symbols
+    const newSymbols: string[] = [];
+    for (const s of symbols) {
+      const count = this.cryptoBinanceSymbols.get(s) ?? 0;
+      if (count === 0) newSymbols.push(s);
+      this.cryptoBinanceSymbols.set(s, count + 1);
+    }
 
-    // Use custom RealTimeDataClient method
-    if (this.cryptoClient) {
-      this.cryptoClient.subscribeCryptoPrices(symbols);
+    if (newSymbols.length > 0 && this.cryptoClient) {
+      this.cryptoClient.subscribeCryptoPrices(newSymbols);
     }
 
     const handler = (price: CryptoPrice) => {
@@ -820,9 +849,19 @@ export class RealtimeServiceV2 extends EventEmitter {
       type: 'update',
       unsubscribe: () => {
         this.off('cryptoPrice', handler);
-        for (const s of symbols) this.cryptoBinanceSymbols.delete(s);
-        if (this.cryptoClient) {
-          this.cryptoClient.unsubscribeCryptoPrices(symbols);
+        const symbolsToUnsub: string[] = [];
+        for (const s of symbols) {
+          const count = this.cryptoBinanceSymbols.get(s) ?? 0;
+          const newCount = count - 1;
+          if (newCount <= 0) {
+            this.cryptoBinanceSymbols.delete(s);
+            symbolsToUnsub.push(s);
+          } else {
+            this.cryptoBinanceSymbols.set(s, newCount);
+          }
+        }
+        if (symbolsToUnsub.length > 0 && this.cryptoClient) {
+          this.cryptoClient.unsubscribeCryptoPrices(symbolsToUnsub);
         }
         this.subscriptions.delete(subId);
       },
@@ -843,12 +882,16 @@ export class RealtimeServiceV2 extends EventEmitter {
   subscribeCryptoChainlinkPrices(symbols: string[], handlers: CryptoPriceHandlers = {}): Subscription {
     const subId = `crypto_chainlink_${++this.subscriptionIdCounter}`;
 
-    // Store symbols for reconnect replay
-    for (const s of symbols) this.cryptoChainlinkSymbols.add(s);
+    // Reference-counted subscribe: only send WebSocket subscribe for NEW symbols
+    const newSymbols: string[] = [];
+    for (const s of symbols) {
+      const count = this.cryptoChainlinkSymbols.get(s) ?? 0;
+      if (count === 0) newSymbols.push(s);
+      this.cryptoChainlinkSymbols.set(s, count + 1);
+    }
 
-    // Use custom RealTimeDataClient method
-    if (this.cryptoClient) {
-      this.cryptoClient.subscribeCryptoChainlinkPrices(symbols);
+    if (newSymbols.length > 0 && this.cryptoClient) {
+      this.cryptoClient.subscribeCryptoChainlinkPrices(newSymbols);
     }
 
     const handler = (price: CryptoPrice) => {
@@ -864,9 +907,19 @@ export class RealtimeServiceV2 extends EventEmitter {
       type: 'update',
       unsubscribe: () => {
         this.off('cryptoChainlinkPrice', handler);
-        for (const s of symbols) this.cryptoChainlinkSymbols.delete(s);
-        if (this.cryptoClient) {
-          this.cryptoClient.unsubscribeCryptoChainlinkPrices(symbols);
+        const symbolsToUnsub: string[] = [];
+        for (const s of symbols) {
+          const count = this.cryptoChainlinkSymbols.get(s) ?? 0;
+          const newCount = count - 1;
+          if (newCount <= 0) {
+            this.cryptoChainlinkSymbols.delete(s);
+            symbolsToUnsub.push(s);
+          } else {
+            this.cryptoChainlinkSymbols.set(s, newCount);
+          }
+        }
+        if (symbolsToUnsub.length > 0 && this.cryptoClient) {
+          this.cryptoClient.unsubscribeCryptoChainlinkPrices(symbolsToUnsub);
         }
         this.subscriptions.delete(subId);
       },
@@ -1222,10 +1275,10 @@ export class RealtimeServiceV2 extends EventEmitter {
       setTimeout(() => {
         if (!this.cryptoClient || !this.cryptoConnected) return;
         if (this.cryptoBinanceSymbols.size > 0) {
-          this.cryptoClient.subscribeCryptoPrices([...this.cryptoBinanceSymbols]);
+          this.cryptoClient.subscribeCryptoPrices([...this.cryptoBinanceSymbols.keys()]);
         }
         if (this.cryptoChainlinkSymbols.size > 0) {
-          this.cryptoClient.subscribeCryptoChainlinkPrices([...this.cryptoChainlinkSymbols]);
+          this.cryptoClient.subscribeCryptoChainlinkPrices([...this.cryptoChainlinkSymbols.keys()]);
         }
       }, 1000);
     }

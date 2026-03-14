@@ -35,7 +35,9 @@ const DEFAULT_URL = WS_ENDPOINTS.MARKET;
 const DEFAULT_PING_INTERVAL = 30_000; // 30 seconds
 const DEFAULT_PONG_TIMEOUT = 10_000; // 10 seconds
 const DEFAULT_RECONNECT_DELAY = 1_000; // 1 second
-const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
+// Default 0 = infinite reconnect (24/7 services should never give up).
+// Previous default of 10 caused permanent connection death after ~17 min of Polymarket downtime.
+const DEFAULT_MAX_RECONNECT_ATTEMPTS = 0;
 
 export class RealTimeDataClient implements RealTimeDataClientInterface {
   private ws: WebSocket | null = null;
@@ -53,6 +55,9 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private pongReceived = true;
   private intentionalDisconnect = false;
+  // Queue for messages sent while WS is not OPEN (e.g., during reconnect).
+  // Drained on successful reconnect in handleOpen().
+  private pendingMessages: string[] = [];
 
   constructor(config: RealTimeDataClientConfig = {}) {
     // Determine URL: explicit URL > channel-based URL > default
@@ -464,7 +469,14 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
       this.ws.send(data);
       this.log(`Sent: ${data.slice(0, 200)}${data.length > 200 ? '...' : ''}`);
     } else {
-      this.log('Cannot send: WebSocket not open');
+      // Queue subscription messages so they're replayed on reconnect.
+      // Cap queue to prevent memory growth during extended disconnections.
+      if (this.pendingMessages.length < 100) {
+        this.pendingMessages.push(data);
+        this.log(`Queued (WS not open, ${this.pendingMessages.length} pending): ${data.slice(0, 100)}...`);
+      } else {
+        this.log('Cannot send: WS not open and pending queue full (100)');
+      }
     }
   }
 
@@ -474,6 +486,17 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
     this.pongReceived = true;
     this.setStatus(ConnectionStatus.CONNECTED);
     this.startPing();
+
+    // Drain pending message queue (subscription messages sent while disconnected)
+    if (this.pendingMessages.length > 0) {
+      this.log(`Draining ${this.pendingMessages.length} pending messages after reconnect`);
+      const queued = [...this.pendingMessages];
+      this.pendingMessages = [];
+      for (const msg of queued) {
+        this.send(msg);
+      }
+    }
+
     this.config.onConnect?.(this);
   }
 
@@ -816,24 +839,30 @@ export class RealTimeDataClient implements RealTimeDataClientInterface {
   // ============================================================================
 
   /**
-   * Handle reconnection with exponential backoff
-   * Delays: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s, 512s (capped at maxReconnectAttempts)
+   * Handle reconnection with exponential backoff (capped at 60s).
+   *
+   * maxReconnectAttempts=0 means infinite retries (default for 24/7 services).
+   * A service that gives up reconnecting is worse than one that keeps trying
+   * with backoff — the WebSocket server WILL come back eventually.
    */
   private handleReconnect(): void {
     if (this.intentionalDisconnect) {
       return;
     }
 
-    if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
+    // 0 = infinite reconnect (no limit)
+    if (this.config.maxReconnectAttempts > 0 && this.reconnectAttempts >= this.config.maxReconnectAttempts) {
       this.log(`Max reconnect attempts (${this.config.maxReconnectAttempts}) reached`);
       this.setStatus(ConnectionStatus.DISCONNECTED);
       return;
     }
 
-    const delay = this.config.reconnectDelay * Math.pow(2, this.reconnectAttempts);
+    // Cap backoff at 60s (was uncapped: 2^9 * 1000 = 512s = 8.5 min!)
+    const delay = Math.min(this.config.reconnectDelay * Math.pow(2, this.reconnectAttempts), 60_000);
     this.reconnectAttempts++;
 
-    this.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts})`);
+    const maxLabel = this.config.maxReconnectAttempts > 0 ? `/${this.config.maxReconnectAttempts}` : '/∞';
+    this.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}${maxLabel})`);
     this.setStatus(ConnectionStatus.RECONNECTING);
 
     this.reconnectTimer = setTimeout(() => {
