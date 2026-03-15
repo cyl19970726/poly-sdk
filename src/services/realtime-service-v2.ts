@@ -376,7 +376,7 @@ export class RealtimeServiceV2 extends EventEmitter {
         this.cryptoConnected = status === ConnectionStatus.CONNECTED;
       },
       autoReconnect: this.config.autoReconnect,
-      pingInterval: this.config.pingInterval,
+      pingInterval: 5_000, // Polymarket RTDS requires 5s PING interval (https://docs.polymarket.com/market-data/websocket/rtds)
       debug: this.config.debug,
     });
 
