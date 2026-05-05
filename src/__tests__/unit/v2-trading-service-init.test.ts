@@ -14,7 +14,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { TradingService } from '../../services/trading-service.js';
 import { RateLimiter } from '../../core/rate-limiter.js';
 import { createUnifiedCache } from '../../core/unified-cache.js';
-import { PolymarketSDK } from '../../index.js';
 
 const ENV_KEY = 'POLY_BUILDER_CODE';
 const VALID_PK = '0x' + '1'.repeat(64);
@@ -112,61 +111,9 @@ describe('TradingService V2 — builder-code gating', () => {
   });
 });
 
-describe('PolymarketSDK V2 — builderCreds without builderCode is fail-fast', () => {
-  let prev: string | undefined;
-
-  beforeEach(() => {
-    prev = process.env.POLY_BUILDER_CODE;
-    delete process.env.POLY_BUILDER_CODE;
-  });
-
-  afterEach(() => {
-    if (prev === undefined) {
-      delete process.env.POLY_BUILDER_CODE;
-    } else {
-      process.env.POLY_BUILDER_CODE = prev;
-    }
-  });
-
-  it('throws clear migration error when builderCreds provided but builderCode missing', () => {
-    expect(
-      () =>
-        new PolymarketSDK({
-          privateKey: VALID_PK,
-          builderCreds: { key: 'k', secret: 's', passphrase: 'p' },
-        })
-    ).toThrow(/builderCreds.*builderCode|POLY_BUILDER_CODE/);
-  });
-
-  it('does not throw when both builderCreds and builderCode are provided', () => {
-    expect(
-      () =>
-        new PolymarketSDK({
-          privateKey: VALID_PK,
-          builderCreds: { key: 'k', secret: 's', passphrase: 'p' },
-          builderCode: VALID_BUILDER_CODE,
-        })
-    ).not.toThrow();
-  });
-
-  it('does not throw when builderCreds is omitted (relayer-less paths)', () => {
-    expect(
-      () =>
-        new PolymarketSDK({
-          privateKey: VALID_PK,
-          builderCode: VALID_BUILDER_CODE,
-        })
-    ).not.toThrow();
-  });
-
-  it('accepts builderCreds when POLY_BUILDER_CODE env supplies the code', () => {
-    process.env.POLY_BUILDER_CODE = VALID_BUILDER_CODE;
-    expect(
-      () =>
-        new PolymarketSDK({
-          privateKey: VALID_PK,
-          builderCreds: { key: 'k', secret: 's', passphrase: 'p' },
-        })
-    ).not.toThrow();
-  });
-});
+// NOTE: The 4 PolymarketSDK fail-fast tests covering `builderCreds` without
+// `builderCode` were removed alongside the `PolymarketSDKConfig.builderCreds`
+// field itself (chore/v2-cleanup-builder-creds, 2026-05-05). After the V2
+// cutover that field carried no behaviour — HMAC creds are now consumed only
+// by `RelayerService`, instantiated directly. The fail-fast guard had nothing
+// left to guard.

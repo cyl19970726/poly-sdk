@@ -267,26 +267,17 @@ export interface PolySDKOptions {
   mempoolWssUrl?: string;
 
   /**
-   * Builder API credentials (HMAC three-tuple) for the **Relayer / gasless TX**
-   * envelope path (`@polymarket/builder-signing-sdk`). Still required after the
-   * 2026-04-28 V2 cutover for Safe deployment / approvals / fund movement.
-   *
-   * NOTE: V2 order signing no longer uses HMAC creds — order attribution is
-   * now carried by the bytes32 `builderCode` (see `builderCode` below). Pass
-   * both fields when running a full Builder flow.
-   */
-  builderCreds?: {
-    key: string;
-    secret: string;
-    passphrase: string;
-  };
-
-  /**
    * V2 builder code (bytes32, e.g. `0x...64hex`). Embedded in every signed
    * order's `Order.builder` field for on-chain attribution. Falls back to the
    * `POLY_BUILDER_CODE` env var when omitted.
    *
    * Required for any path that places orders post-2026-04-28 cutover.
+   *
+   * NOTE: HMAC builder creds (`{ key, secret, passphrase }`) are NO LONGER
+   * accepted on this config. After the V2 cutover they are only consumed by
+   * `RelayerService` for gasless TX envelopes (Safe deploy / wrap / transfer);
+   * instantiate `RelayerService` directly with `RelayerServiceConfig.builderCreds`
+   * if you need that path.
    */
   builderCode?: string;
 

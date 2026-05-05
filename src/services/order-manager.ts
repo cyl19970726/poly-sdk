@@ -214,12 +214,6 @@ export interface OrderManagerConfig {
   /** RPC URL for Polygon provider (for settlement tracking) */
   polygonRpcUrl?: string;
   /**
-   * Builder API HMAC credentials. Retained on the OrderManager surface for
-   * compatibility / Relayer-side flows; **not** consumed by V2 order signing
-   * (use `builderCode` instead).
-   */
-  builderCreds?: { key: string; secret: string; passphrase: string };
-  /**
    * V2 builder code (bytes32). Embedded in every signed order's `builder`
    * field on V2. Falls back to `POLY_BUILDER_CODE` env var when omitted.
    */
@@ -702,7 +696,7 @@ export class OrderManager extends EventEmitter {
   private polygonProvider: ethers.providers.Provider | null = null;
 
   // ========== Configuration ==========
-  private config: Required<Omit<OrderManagerConfig, 'builderCreds' | 'builderCode' | 'safeAddress'>> & Pick<OrderManagerConfig, 'builderCreds' | 'builderCode' | 'safeAddress'>;
+  private config: Required<Omit<OrderManagerConfig, 'builderCode' | 'safeAddress'>> & Pick<OrderManagerConfig, 'builderCode' | 'safeAddress'>;
   private initialized = false;
 
   // ========== Monitoring State ==========
@@ -734,9 +728,9 @@ export class OrderManager extends EventEmitter {
     const cache = config.cache || createUnifiedCache();
 
     // Initialize TradingService (always needed)
-    // V2: order signing reads `builderCode` (bytes32) — HMAC `builderCreds`
-    // are no longer threaded into TradingService, but remain on the
-    // OrderManagerConfig for upstream Relayer flows.
+    // V2: order signing reads `builderCode` (bytes32). HMAC creds are no
+    // longer threaded through OrderManager — RelayerService owns that path
+    // directly (gasless TX envelopes for deploy/wrap/transfer).
     this.tradingService = new TradingService(
       rateLimiter,
       cache,

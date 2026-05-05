@@ -647,36 +647,12 @@ export class PolymarketSDK {
   private _initialized = false;
 
   constructor(config: PolymarketSDKConfig = {}) {
-    // -----------------------------------------------------------------------
-    // V2 migration guard: fail-fast if caller still relies on V1-style HMAC
-    // creds for order signing.
-    //
-    // Background: pre-V2, `builderCreds` (HMAC three-tuple) flowed into the
-    // trading path and produced a HMAC-signed builder header. Post-2026-04-28
-    // V2 cutover, order attribution moved to a bytes32 `builderCode` embedded
-    // directly in the order struct, and HMAC creds are only used for the
-    // Relayer / gasless TX path. TypeScript's structural typing still accepts
-    // an old `{ builderCreds }` config object on `PolymarketSDKConfig` (the
-    // field stays on `PolySDKOptions` because Relayer needs it), so without
-    // an explicit guard the SDK silently drops the old auth and the first
-    // signed order surfaces the V1→V2 drift only at runtime.
-    //
-    // We require: when `builderCreds` is supplied, `builderCode` (or the
-    // `POLY_BUILDER_CODE` env) MUST also be supplied. This catches the
-    // ambiguous "still on the V1 mental model" call sites without breaking
-    // pure-Relayer setups (which would normally not pass `builderCreds`
-    // through `PolymarketSDK`'s constructor anyway).
-    // -----------------------------------------------------------------------
-    if (config.builderCreds && !config.builderCode && !process.env.POLY_BUILDER_CODE) {
-      throw new Error(
-        'PolymarketSDK: `builderCreds` (V1 HMAC three-tuple) is no longer used ' +
-        'for order signing after the 2026-04-28 V2 cutover. Order attribution ' +
-        'is now carried by the bytes32 `builderCode` (Order.builder field). ' +
-        'Set the POLY_BUILDER_CODE env var (32-byte hex) or pass ' +
-        '`builderCode` in `PolymarketSDKConfig` alongside `builderCreds`. ' +
-        'See guide-polymarket-v2-migration for the full migration path.'
-      );
-    }
+    // V2 cutover (2026-04-28): order attribution is carried by the bytes32
+    // `builderCode` (Order.builder field), not by HMAC builder creds. The
+    // `PolymarketSDKConfig.builderCreds` field has been removed — HMAC creds
+    // are now only consumed by `RelayerService` directly for gasless TX
+    // envelopes (Safe deploy / wrap / transfer).
+    // See guide-polymarket-v2-migration for the full migration path.
 
     // Initialize infrastructure
     this.rateLimiter = new RateLimiter();
@@ -694,9 +670,8 @@ export class PolymarketSDK {
       privateKey,
       chainId: config.chainId,
       credentials: config.creds,
-      // V2: order signing uses `builderCode` (bytes32). HMAC `builderCreds`
-      // are still on the SDK options (for Relayer), but no longer flow into
-      // the trading path.
+      // V2: order signing uses `builderCode` (bytes32) — HMAC creds belong
+      // to `RelayerService`, not the trading path.
       builderCode: config.builderCode,
       safeAddress: config.safeAddress,
       dataApi: this.dataApi,
