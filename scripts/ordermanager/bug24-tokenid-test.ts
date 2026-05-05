@@ -24,7 +24,7 @@
  * Balance Required: ~$5 USDC.e
  */
 
-import { ClobClient, Chain } from '@polymarket/clob-client';
+import { ClobClient, Chain } from '@polymarket/clob-client-v2';
 import { Wallet } from 'ethers';
 import { OrderManager, type FillEvent } from '../../src/services/order-manager.js';
 import { RealtimeServiceV2 } from '../../src/services/realtime-service-v2.js';
@@ -208,8 +208,8 @@ async function main() {
   const address = await wallet.getAddress();
   log(`Wallet: ${address}`);
 
-  // Initialize CLOB client
-  const clobClient = new ClobClient(CLOB_HOST, Chain.POLYGON, wallet);
+  // Initialize CLOB client (V2 SDK: options-bag constructor).
+  const clobClient = new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet });
 
   // Get API credentials
   const creds = await clobClient.createOrDeriveApiCreds();

@@ -18,7 +18,7 @@
  */
 
 import { Wallet } from 'ethers';
-import { ClobClient } from '@polymarket/clob-client';
+import { ClobClient } from '@polymarket/clob-client-v2';
 import { DataApiClient } from '../src/clients/data-api.js';
 import { GammaApiClient } from '../src/clients/gamma-api.js';
 import { RealtimeServiceV2 } from '../src/services/realtime-service-v2.js';
@@ -264,13 +264,12 @@ async function verifyMarketData() {
 
           // Test 3: Get orderbook
           try {
-            const clobClient = new ClobClient(
-              '137',  // Polygon mainnet
-              wallet,
-              {
-                chainId: 137,
-              }
-            );
+            // V2 SDK options-bag constructor (was V1 positional args).
+            const clobClient = new ClobClient({
+              host: 'https://clob.polymarket.com',
+              chain: 137 as any, // Polygon mainnet
+              signer: wallet as any,
+            });
 
             const orderbook = await clobClient.getOrderBook(market.conditionId);
 

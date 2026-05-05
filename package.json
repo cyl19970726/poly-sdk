@@ -56,7 +56,6 @@
     "@catalyst-team/cache": "^0.2.0",
     "@polymarket/builder-relayer-client": "^0.0.8",
     "@polymarket/builder-signing-sdk": "^0.0.8",
-    "@polymarket/clob-client": "^5.1.3",
     "@polymarket/clob-client-v2": "1.0.3",
     "@types/ws": "^8.18.1",
     "bottleneck": "^2.19.5",

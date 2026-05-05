@@ -5,7 +5,7 @@
  * Provides helper functions for status validation and state transitions.
  */
 
-import type { OpenOrder } from '@polymarket/clob-client';
+import type { OpenOrder } from '@polymarket/clob-client-v2';
 import { OrderStatus } from './types.js';
 import { createModuleLogger } from './logger.js';
 

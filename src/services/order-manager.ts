@@ -213,8 +213,17 @@ export interface OrderManagerConfig {
   pollingInterval?: number;
   /** RPC URL for Polygon provider (for settlement tracking) */
   polygonRpcUrl?: string;
-  /** Builder API credentials (for gasless operations and fee sharing) */
+  /**
+   * Builder API HMAC credentials. Retained on the OrderManager surface for
+   * compatibility / Relayer-side flows; **not** consumed by V2 order signing
+   * (use `builderCode` instead).
+   */
   builderCreds?: { key: string; secret: string; passphrase: string };
+  /**
+   * V2 builder code (bytes32). Embedded in every signed order's `builder`
+   * field on V2. Falls back to `POLY_BUILDER_CODE` env var when omitted.
+   */
+  builderCode?: string;
   /** Gnosis Safe address — required for Builder mode so orders use Safe as maker */
   safeAddress?: string;
 }
@@ -693,7 +702,7 @@ export class OrderManager extends EventEmitter {
   private polygonProvider: ethers.providers.Provider | null = null;
 
   // ========== Configuration ==========
-  private config: Required<Omit<OrderManagerConfig, 'builderCreds' | 'safeAddress'>> & Pick<OrderManagerConfig, 'builderCreds' | 'safeAddress'>;
+  private config: Required<Omit<OrderManagerConfig, 'builderCreds' | 'builderCode' | 'safeAddress'>> & Pick<OrderManagerConfig, 'builderCreds' | 'builderCode' | 'safeAddress'>;
   private initialized = false;
 
   // ========== Monitoring State ==========
@@ -725,13 +734,16 @@ export class OrderManager extends EventEmitter {
     const cache = config.cache || createUnifiedCache();
 
     // Initialize TradingService (always needed)
+    // V2: order signing reads `builderCode` (bytes32) — HMAC `builderCreds`
+    // are no longer threaded into TradingService, but remain on the
+    // OrderManagerConfig for upstream Relayer flows.
     this.tradingService = new TradingService(
       rateLimiter,
       cache,
       {
         privateKey: config.privateKey,
         chainId: this.config.chainId,
-        builderCreds: config.builderCreds,
+        builderCode: config.builderCode,
         safeAddress: config.safeAddress,
       }
     );

@@ -17,7 +17,7 @@
  *   PRIVATE_KEY=0x... npx tsx scripts/ordermanager/test-market-order-lifecycle.ts --fak-only
  */
 
-import { ClobClient, Chain } from '@polymarket/clob-client';
+import { ClobClient, Chain } from '@polymarket/clob-client-v2';
 import { Wallet } from 'ethers';
 import { OrderManager } from '../../src/services/order-manager.js';
 import { GammaApiClient } from '../../src/clients/gamma-api.js';
@@ -140,7 +140,8 @@ async function main() {
 
   // Use CLOB API to get token IDs (they're not in Gamma API response)
   const wallet = new Wallet(PRIVATE_KEY);
-  const clobClient = new ClobClient(CLOB_HOST, Chain.POLYGON, wallet);
+  // V2 SDK: options-bag constructor; `chain` replaces V1 `chainId`.
+  const clobClient = new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet });
 
   console.log('   Fetching market details from CLOB API...');
   const clobMarket = await clobClient.getMarket(testMarket.conditionId);

@@ -640,7 +640,10 @@ export class PolymarketSDK {
       privateKey,
       chainId: config.chainId,
       credentials: config.creds,
-      builderCreds: config.builderCreds,
+      // V2: order signing uses `builderCode` (bytes32). HMAC `builderCreds`
+      // are still on the SDK options (for Relayer), but no longer flow into
+      // the trading path.
+      builderCode: config.builderCode,
       safeAddress: config.safeAddress,
       dataApi: this.dataApi,
     });

@@ -1,7 +1,7 @@
 /**
  * TradingService
  *
- * Trading service using official @polymarket/clob-client.
+ * Trading service using official @polymarket/clob-client-v2 (CLOB V2).
  *
  * Provides:
  * - Order creation (limit, market)
@@ -15,6 +15,16 @@
  * Orders below these limits are validated and rejected before sending to API.
  *
  * Note: Market data methods have been moved to MarketService.
+ *
+ * V2 migration notes:
+ * - Constructor switched from positional args to options-bag (`{ host, chain, ... }`).
+ * - `builderConfig` content changed from HMAC three-tuple to `{ builderCode }`.
+ * - Order struct now embeds `timestamp(ms)` / `metadata(bytes32)` / `builder(bytes32)`
+ *   in place of `nonce` / `feeRateBps` / `taker` — the SDK populates these
+ *   fields internally; callers only forward `expiration` and `builderCode`
+ *   (the latter via `builderConfig`).
+ * - HMAC creds (`@polymarket/builder-signing-sdk`) are still used by RelayerService
+ *   for gasless TX envelopes; only the *order signing* path swaps to builderCode.
  */
 
 import {
@@ -22,16 +32,14 @@ import {
   Side as ClobSide,
   OrderType as ClobOrderType,
   Chain,
+  SignatureTypeV2,
   type OpenOrder,
   type Trade as ClobTrade,
   type TickSize,
-} from '@polymarket/clob-client';
-
-// SignatureType from @polymarket/order-utils (transitive dep, not directly importable)
-// Values: EOA = 0, POLY_PROXY = 1, POLY_GNOSIS_SAFE = 2
-const SIGNATURE_TYPE_POLY_GNOSIS_SAFE = 2;
+} from '@polymarket/clob-client-v2';
 
 import { Wallet } from 'ethers';
+import { readBuilderCode, readBuilderCodeOptional } from '../constants/builder-config.js';
 import { RateLimiter, ApiType } from '../core/rate-limiter.js';
 import type { UnifiedCache } from '../core/unified-cache.js';
 import { CACHE_TTL } from '../core/unified-cache.js';
@@ -100,13 +108,24 @@ export interface TradingServiceConfig {
   chainId?: number;
   /** Pre-generated API credentials (optional) */
   credentials?: ApiCredentials;
-  /** Builder API credentials (optional) - enables Builder mode with fee sharing and rewards */
-  builderCreds?: {
-    key: string;
-    secret: string;
-    passphrase: string;
-  };
-  /** Gnosis Safe address — required for Builder mode so orders use Safe as maker/funder */
+  /**
+   * V2 builder code (bytes32). When provided, every order signed by this
+   * service is attributed to this code on-chain. Falls back to the
+   * `POLY_BUILDER_CODE` env var when omitted.
+   *
+   * Required for any order placement path; throws at `initialize()` if neither
+   * config nor env supplies a valid code.
+   *
+   * Note: replaces the V1 `builderCreds` HMAC three-tuple. HMAC creds are
+   * still consumed by `RelayerService` for gasless TX envelopes; they are
+   * NOT used by V2 order signing.
+   */
+  builderCode?: string;
+  /**
+   * Gnosis Safe address — required for Builder mode so orders use Safe as
+   * maker/funder. Setting this together with a builder code switches the
+   * signature type to `POLY_GNOSIS_SAFE` (matches V1 behaviour).
+   */
   safeAddress?: string;
   /** Data API client — required for clearPosition() to fetch size internally */
   dataApi?: DataApiClient;
@@ -355,8 +374,33 @@ export class TradingService {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Create CLOB client with L1 auth (wallet)
-    this.clobClient = new ClobClient(CLOB_HOST, this.chainId, this.wallet);
+    // Resolve builder code: explicit config > env. Allow undefined here so
+    // read-only auth flows (deriveApiKey/createApiKey) can run without it,
+    // but enforce presence before any order is placed (see ensureBuilderCode).
+    // Note: readBuilderCodeOptional throws on a malformed env value, so a
+    // typo fails loudly even if no code is required for the current call.
+    const resolvedBuilderCode =
+      this.config.builderCode !== undefined
+        ? this.config.builderCode
+        : readBuilderCodeOptional();
+
+    // Builder mode: orders use Safe as maker, signed by EOA owner. In V2 the
+    // trigger is `safeAddress` set together with a builder code — HMAC creds
+    // are no longer involved in this branch.
+    const isBuilderMode = !!resolvedBuilderCode && !!this.config.safeAddress;
+    const builderConfig = resolvedBuilderCode
+      ? { builderCode: resolvedBuilderCode }
+      : undefined;
+
+    // Create CLOB client with L1 auth (wallet) for API-key derivation. We
+    // attach the builderConfig up front so any subsequent re-init keeps
+    // identical attribution.
+    this.clobClient = new ClobClient({
+      host: CLOB_HOST,
+      chain: this.chainId,
+      signer: this.wallet,
+      builderConfig,
+    });
 
     // Get or create API credentials
     // We use derive-first strategy (opposite of official createOrDeriveApiKey)
@@ -370,40 +414,39 @@ export class TradingService {
       };
     }
 
-    // Construct BuilderConfig if builderCreds are provided
-    let builderConfig: any = undefined;
-    if (this.config.builderCreds) {
-      const { BuilderConfig } = await import('@polymarket/builder-signing-sdk');
-      builderConfig = new BuilderConfig({
-        localBuilderCreds: {
-          key: this.config.builderCreds.key,
-          secret: this.config.builderCreds.secret,
-          passphrase: this.config.builderCreds.passphrase,
-        },
-      });
-    }
-
-    // Builder mode: orders use Safe as maker, signed by EOA owner
-    const isBuilderMode = !!this.config.builderCreds && !!this.config.safeAddress;
-
-    // Re-initialize with L2 auth (credentials) and optional BuilderConfig
-    this.clobClient = new ClobClient(
-      CLOB_HOST,
-      this.chainId,
-      this.wallet,
-      {
+    // Re-initialize with L2 auth (credentials) and (optional) builder config.
+    // V2 ClobClient takes a single options object; `chain` replaces V1
+    // `chainId`, `signatureType`/`funderAddress`/`builderConfig` are nested.
+    this.clobClient = new ClobClient({
+      host: CLOB_HOST,
+      chain: this.chainId,
+      signer: this.wallet,
+      creds: {
         key: this.credentials.key,
         secret: this.credentials.secret,
         passphrase: this.credentials.passphrase,
       },
-      isBuilderMode ? SIGNATURE_TYPE_POLY_GNOSIS_SAFE : undefined, // signatureType
-      isBuilderMode ? this.config.safeAddress : undefined,         // funderAddress (Safe holds the tokens)
-      undefined, // geoBlockToken
-      undefined, // useServerTime
-      builderConfig, // BuilderConfig (arg 9)
-    );
+      signatureType: isBuilderMode ? SignatureTypeV2.POLY_GNOSIS_SAFE : undefined,
+      funderAddress: isBuilderMode ? this.config.safeAddress : undefined,
+      builderConfig,
+    });
 
     this.initialized = true;
+  }
+
+  /**
+   * Validate that a V2 builder code is available before any order placement
+   * path. Pulled into a helper so each order entry-point fails fast with the
+   * same diagnostic.
+   */
+  private ensureBuilderCode(): void {
+    if (
+      this.config.builderCode === undefined &&
+      readBuilderCodeOptional() === undefined
+    ) {
+      // readBuilderCode() raises with the canonical error message + plan link.
+      readBuilderCode();
+    }
   }
 
   /**
@@ -500,6 +543,8 @@ export class TradingService {
       };
     }
 
+    // V2 attribution: every signed order MUST carry a builder code.
+    this.ensureBuilderCode();
     const client = await this.ensureInitialized();
 
     return this.rateLimiter.execute(ApiType.CLOB_API, async () => {
@@ -511,6 +556,11 @@ export class TradingService {
 
         const orderType = params.orderType === 'GTD' ? ClobOrderType.GTD : ClobOrderType.GTC;
 
+        // V2 UserOrder shape: only `expiration` (unix seconds) is forwarded
+        // explicitly; the SDK populates `timestamp` (ms), `metadata` (zero
+        // bytes32), and `builder` (from `builderConfig.builderCode`)
+        // internally during order signing. `nonce` / `feeRateBps` / `taker`
+        // are removed by V2.
         const result = await client.createAndPostOrder(
           {
             tokenID: params.tokenId,
@@ -567,6 +617,7 @@ export class TradingService {
       };
     }
 
+    this.ensureBuilderCode();
     const client = await this.ensureInitialized();
 
     return this.rateLimiter.execute(ApiType.CLOB_API, async () => {
@@ -578,6 +629,9 @@ export class TradingService {
 
         const orderType = params.orderType === 'FAK' ? ClobOrderType.FAK : ClobOrderType.FOK;
 
+        // V2 UserMarketOrder: same `tokenID` / `side` / `amount` / `price`
+        // surface; `feeRateBps` / `nonce` / `taker` removed; `builder` and
+        // `metadata` populated by the SDK from `builderConfig`.
         const result = await client.createAndPostMarketOrder(
           {
             tokenID: params.tokenId,
@@ -717,6 +771,7 @@ export class TradingService {
       };
     }
 
+    this.ensureBuilderCode();
     const client = await this.ensureInitialized();
 
     return this.rateLimiter.execute(ApiType.CLOB_API, async () => {
@@ -1357,7 +1412,11 @@ export async function createBuilderApiKey(privateKey: string): Promise<BuilderKe
   const wallet = new Wallet(privateKey);
 
   // Step 1: L1 auth → derive or create L2 CLOB credentials
-  const l1Client = new ClobClient(CLOB_HOST, POLYGON_MAINNET as Chain, wallet);
+  const l1Client = new ClobClient({
+    host: CLOB_HOST,
+    chain: POLYGON_MAINNET as Chain,
+    signer: wallet,
+  });
 
   let clobCreds: ApiCredentials;
   const derived = await l1Client.deriveApiKey();
@@ -1375,12 +1434,12 @@ export async function createBuilderApiKey(privateKey: string): Promise<BuilderKe
   }
 
   // Step 2: L2 auth → create L3 Builder API key
-  const l2Client = new ClobClient(
-    CLOB_HOST,
-    POLYGON_MAINNET as Chain,
-    wallet,
-    { key: clobCreds.key, secret: clobCreds.secret, passphrase: clobCreds.passphrase },
-  );
+  const l2Client = new ClobClient({
+    host: CLOB_HOST,
+    chain: POLYGON_MAINNET as Chain,
+    signer: wallet,
+    creds: { key: clobCreds.key, secret: clobCreds.secret, passphrase: clobCreds.passphrase },
+  });
 
   const builderCreds = await l2Client.createBuilderApiKey();
   if (!builderCreds.key) {

@@ -267,8 +267,13 @@ export interface PolySDKOptions {
   mempoolWssUrl?: string;
 
   /**
-   * Builder API credentials for fee sharing and gasless order execution.
-   * Enables Builder mode with Polymarket's Builder Relayer.
+   * Builder API credentials (HMAC three-tuple) for the **Relayer / gasless TX**
+   * envelope path (`@polymarket/builder-signing-sdk`). Still required after the
+   * 2026-04-28 V2 cutover for Safe deployment / approvals / fund movement.
+   *
+   * NOTE: V2 order signing no longer uses HMAC creds — order attribution is
+   * now carried by the bytes32 `builderCode` (see `builderCode` below). Pass
+   * both fields when running a full Builder flow.
    */
   builderCreds?: {
     key: string;
@@ -277,8 +282,18 @@ export interface PolySDKOptions {
   };
 
   /**
+   * V2 builder code (bytes32, e.g. `0x...64hex`). Embedded in every signed
+   * order's `Order.builder` field for on-chain attribution. Falls back to the
+   * `POLY_BUILDER_CODE` env var when omitted.
+   *
+   * Required for any path that places orders post-2026-04-28 cutover.
+   */
+  builderCode?: string;
+
+  /**
    * Gnosis Safe address for Builder mode.
-   * When provided with builderCreds, orders use Safe as maker/funder.
+   * When provided with `builderCode`, orders are signed by the EOA owner but
+   * use the Safe as maker/funder (`SignatureTypeV2.POLY_GNOSIS_SAFE`).
    * Derive via RelayerService.getSafeAddress() or deploy via RelayerService.deploySafe().
    */
   safeAddress?: string;
