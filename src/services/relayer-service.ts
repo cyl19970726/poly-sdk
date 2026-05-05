@@ -25,7 +25,6 @@ import { ethers, Wallet, BigNumber } from 'ethers';
 import {
   CTF_CONTRACT,
   NEG_RISK_ADAPTER,
-  USDC_CONTRACT,
   USDC_DECIMALS,
 } from '../clients/ctf-client.js';
 import { POLYGON_CONTRACTS_V2 } from '../constants/v2-contracts.js';
@@ -72,6 +71,33 @@ export interface RelayerResult {
 
 export interface SafeDeployResult extends RelayerResult {
   safeAddress: string;
+}
+
+// ============================================================================
+// V2 collateral routing
+// ============================================================================
+
+/**
+ * Collateral token identifier used to route Relayer ops to the correct
+ * ERC-20 contract. V2 trade settlement collateral is `pUSD`; `USDC.e` is
+ * retained for off-exchange flows (Safe-to-Safe transfers, fund-out collect,
+ * legacy migrations).
+ *
+ * Defaults across this service are `'pUSD'` to match the post-V2 trading
+ * collateral. Pass `'USDC.e'` explicitly only for fund-flow paths that
+ * intentionally bypass pUSD wrapping (e.g. `ee wallet collect` draining a
+ * Safe back to USDC.e before transfer to main).
+ */
+export type CollateralToken = 'pUSD' | 'USDC.e';
+
+/**
+ * Resolve a {@link CollateralToken} identifier to its on-chain ERC-20
+ * contract address.
+ */
+function resolveCollateralAddress(token: CollateralToken): string {
+  return token === 'pUSD'
+    ? POLYGON_CONTRACTS_V2.pUSD
+    : POLYGON_CONTRACTS_V2.usdcE;
 }
 
 // ============================================================================
@@ -251,18 +277,28 @@ export class RelayerService {
   }
 
   /**
-   * Approve USDC.e for CTF operations
+   * Approve a collateral token for CTF / Onramp / Offramp operations.
    *
-   * @param spender - Spender address (typically CTF_CONTRACT)
+   * V2 default is `pUSD` (the trading collateral). Pass `'USDC.e'` for
+   * off-exchange flows (e.g. approving the Onramp prior to wrap, or legacy
+   * V1-style direct approvals).
+   *
+   * @param spender - Spender address (CTF_CONTRACT, Onramp/Offramp, etc.)
    * @param amount - Amount to approve (use MaxUint256 for unlimited)
+   * @param token - Collateral token to approve. Defaults to `'pUSD'`.
    */
-  async approveUsdc(spender: string, amount: BigNumber): Promise<RelayerResult> {
+  async approveUsdc(
+    spender: string,
+    amount: BigNumber,
+    token: CollateralToken = 'pUSD'
+  ): Promise<RelayerResult> {
     const usdcInterface = new ethers.utils.Interface(ERC20_ABI);
     const data = usdcInterface.encodeFunctionData('approve', [spender, amount]);
+    const collateralAddress = resolveCollateralAddress(token);
 
     try {
       const response = await this.relayClient.execute([{
-        to: USDC_CONTRACT,
+        to: collateralAddress,
         value: '0',
         data,
       }]);
@@ -419,32 +455,47 @@ export class RelayerService {
   }
 
   /**
-   * Transfer USDC.e to another address via Relayer (gasless)
+   * Transfer collateral (default `pUSD`) to another address via Relayer
+   * (gasless).
    *
-   * Enables Safe-to-EOA or Safe-to-Safe USDC transfers without gas fees.
-   * Useful for fund distribution/collection from main wallet to strategy wallets.
+   * Enables Safe-to-EOA or Safe-to-Safe collateral transfers without gas
+   * fees. Useful for fund distribution / collection between main wallet and
+   * strategy wallets.
+   *
+   * Defaults to `'pUSD'` so post-V2 strategy flows (which keep working
+   * capital in pUSD) work out of the box. Pass `'USDC.e'` for fund-out
+   * paths that drain unwrapped USDC.e back to main.
    *
    * @param recipient - Recipient address (can be EOA or another Safe)
-   * @param amount - USDC amount in human-readable format (e.g., "100" for 100 USDC)
+   * @param amount   - Amount in human-readable format (e.g., "100" for 100
+   *                   pUSD or 100 USDC.e — both are 6-decimal tokens).
+   * @param token    - Collateral token to transfer. Defaults to `'pUSD'`.
    * @returns RelayerResult with transaction status
    *
    * @example
    * ```typescript
-   * // Withdraw from Safe to main wallet
-   * const result = await relayer.transferUsdc("0x0f5988a267303f46b50912f176450491df10476f", "300");
-   * if (result.success) {
-   *   console.log(`Transfer tx: ${result.txHash}`);
-   * }
+   * // Default V2: transfer pUSD between strategy Safes
+   * await relayer.transferUsdc(otherSafe, "300");
+   *
+   * // Fund-out: drain unwrapped USDC.e back to main wallet
+   * await relayer.transferUsdc(mainEoa, "300", 'USDC.e');
    * ```
    */
-  async transferUsdc(recipient: string, amount: string): Promise<RelayerResult> {
+  async transferUsdc(
+    recipient: string,
+    amount: string,
+    token: CollateralToken = 'pUSD'
+  ): Promise<RelayerResult> {
+    // pUSD and USDC.e both use 6 decimals; reusing USDC_DECIMALS keeps
+    // parity with the V1 path while routing the transfer to the right token.
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
     const usdcInterface = new ethers.utils.Interface(ERC20_ABI);
     const data = usdcInterface.encodeFunctionData('transfer', [recipient, amountWei]);
+    const collateralAddress = resolveCollateralAddress(token);
 
     try {
       const response = await this.relayClient.execute([{
-        to: USDC_CONTRACT,
+        to: collateralAddress,
         value: '0',
         data,
       }]);
@@ -510,26 +561,38 @@ export class RelayerService {
   }
 
   /**
-   * Split USDC into YES + NO tokens (gasless)
+   * Split collateral into YES + NO tokens (gasless).
+   *
+   * V2 markets settle in pUSD, so the default `token` is `'pUSD'`. Legacy
+   * markets (or fixtures still on USDC.e collateral) can pass `'USDC.e'`.
    *
    * @param conditionId - Market condition ID
-   * @param amount - USDC amount in human-readable format (e.g., "100" for 100 USDC)
+   * @param amount      - Collateral amount in human-readable format (e.g.,
+   *                      "100" for 100 pUSD).
+   * @param isNegRisk   - True for NegRisk markets (routes via adapter).
+   * @param token       - Collateral token. Defaults to `'pUSD'`.
    * @returns RelayerResult with transaction status
    *
    * @example
    * ```typescript
-   * const result = await relayer.split(conditionId, "100");
+   * const result = await relayer.split(conditionId, "100"); // V2 default = pUSD
    * if (result.success) {
    *   console.log(`Split tx: ${result.txHash}`);
    * }
    * ```
    */
-  async split(conditionId: string, amount: string, isNegRisk = false): Promise<RelayerResult> {
+  async split(
+    conditionId: string,
+    amount: string,
+    isNegRisk = false,
+    token: CollateralToken = 'pUSD'
+  ): Promise<RelayerResult> {
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
     const ctfInterface = new ethers.utils.Interface(CTF_ABI);
+    const collateralAddress = resolveCollateralAddress(token);
 
     const data = ctfInterface.encodeFunctionData('splitPosition', [
-      USDC_CONTRACT,
+      collateralAddress,
       ethers.constants.HashZero, // parentCollectionId
       conditionId,
       [1, 2], // partition [YES, NO]
@@ -567,18 +630,30 @@ export class RelayerService {
   }
 
   /**
-   * Merge YES + NO tokens back to USDC (gasless)
+   * Merge YES + NO tokens back to collateral (gasless).
+   *
+   * Defaults to pUSD (V2). Pass `'USDC.e'` for legacy positions that still
+   * settle in USDC.e.
    *
    * @param conditionId - Market condition ID
-   * @param amount - Number of token pairs to merge (e.g., "100" for 100 YES + 100 NO)
+   * @param amount      - Number of token pairs to merge (e.g., "100" for
+   *                      100 YES + 100 NO).
+   * @param isNegRisk   - True for NegRisk markets (routes via adapter).
+   * @param token       - Collateral token to receive. Defaults to `'pUSD'`.
    * @returns RelayerResult with transaction status
    */
-  async merge(conditionId: string, amount: string, isNegRisk = false): Promise<RelayerResult> {
+  async merge(
+    conditionId: string,
+    amount: string,
+    isNegRisk = false,
+    token: CollateralToken = 'pUSD'
+  ): Promise<RelayerResult> {
     const amountWei = ethers.utils.parseUnits(amount, USDC_DECIMALS);
     const ctfInterface = new ethers.utils.Interface(CTF_ABI);
+    const collateralAddress = resolveCollateralAddress(token);
 
     const data = ctfInterface.encodeFunctionData('mergePositions', [
-      USDC_CONTRACT,
+      collateralAddress,
       ethers.constants.HashZero,
       conditionId,
       [1, 2],
@@ -616,13 +691,25 @@ export class RelayerService {
   }
 
   /**
-   * Redeem winning tokens to USDC (gasless)
+   * Redeem winning tokens back to collateral (gasless).
+   *
+   * Defaults to pUSD (V2). NegRisk adapter does not take a collateral
+   * argument (it knows the market's collateral on-chain), so the `token`
+   * argument is only consumed by the standard CTF path.
    *
    * @param conditionId - Market condition ID
-   * @param outcome - Winning outcome ('YES' or 'NO')
+   * @param outcome     - Winning outcome ('YES' or 'NO')
+   * @param isNegRisk   - True for NegRisk markets (routes via adapter).
+   * @param token       - Collateral token (standard CTF only). Defaults to
+   *                      `'pUSD'`.
    * @returns RelayerResult with transaction status
    */
-  async redeem(conditionId: string, outcome: 'YES' | 'NO', isNegRisk = false): Promise<RelayerResult> {
+  async redeem(
+    conditionId: string,
+    outcome: 'YES' | 'NO',
+    isNegRisk = false,
+    token: CollateralToken = 'pUSD'
+  ): Promise<RelayerResult> {
     let data: string;
     let to: string;
 
@@ -641,8 +728,9 @@ export class RelayerService {
       // Standard CTF: redeemPositions(collateral, parentCollectionId, conditionId, indexSets)
       const indexSets = outcome === 'YES' ? [1] : [2];
       const ctfInterface = new ethers.utils.Interface(CTF_ABI);
+      const collateralAddress = resolveCollateralAddress(token);
       data = ctfInterface.encodeFunctionData('redeemPositions', [
-        USDC_CONTRACT,
+        collateralAddress,
         ethers.constants.HashZero,
         conditionId,
         indexSets,
@@ -726,24 +814,41 @@ export class RelayerService {
   }
 
   /**
-   * Batch redeem multiple winning positions in a single relayer call (gasless)
+   * Batch redeem multiple winning positions in a single relayer call
+   * (gasless).
    *
-   * @param redeems - Array of { conditionId, outcome } to redeem
+   * Each entry can specify its own collateral `token` (defaults to `'pUSD'`)
+   * to support mixed batches across V2 (pUSD) and legacy (USDC.e) markets.
+   *
+   * @param redeems - Array of { conditionId, outcome, isNegRisk?, token? }
+   *                  to redeem.
    * @returns RelayerResult with transaction status
    */
-  async redeemBatch(redeems: Array<{ conditionId: string; outcome: 'YES' | 'NO'; isNegRisk?: boolean }>): Promise<RelayerResult> {
+  async redeemBatch(
+    redeems: Array<{
+      conditionId: string;
+      outcome: 'YES' | 'NO';
+      isNegRisk?: boolean;
+      token?: CollateralToken;
+    }>
+  ): Promise<RelayerResult> {
     if (redeems.length === 0) {
       return { success: true };
     }
 
     // Single redeem — use simple path
     if (redeems.length === 1) {
-      return this.redeem(redeems[0].conditionId, redeems[0].outcome, redeems[0].isNegRisk);
+      return this.redeem(
+        redeems[0].conditionId,
+        redeems[0].outcome,
+        redeems[0].isNegRisk,
+        redeems[0].token ?? 'pUSD'
+      );
     }
 
     const ctfInterface = new ethers.utils.Interface(CTF_ABI);
     const negRiskInterface = new ethers.utils.Interface(NEG_RISK_ADAPTER_ABI);
-    const transactions = redeems.map(({ conditionId, outcome, isNegRisk }) => {
+    const transactions = redeems.map(({ conditionId, outcome, isNegRisk, token }) => {
       let data: string;
       let to: string;
       if (isNegRisk) {
@@ -755,8 +860,9 @@ export class RelayerService {
         to = NEG_RISK_ADAPTER;
       } else {
         const indexSets = outcome === 'YES' ? [1] : [2];
+        const collateralAddress = resolveCollateralAddress(token ?? 'pUSD');
         data = ctfInterface.encodeFunctionData('redeemPositions', [
-          USDC_CONTRACT,
+          collateralAddress,
           ethers.constants.HashZero,
           conditionId,
           indexSets,

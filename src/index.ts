@@ -435,16 +435,24 @@ export type {
 // TradingService provides all trading functionality with proper type exports
 
 // CTF (Conditional Token Framework)
-// NOTE: USDC_CONTRACT is USDC.e (bridged), required for Polymarket CTF
-// NATIVE_USDC_CONTRACT is native USDC, NOT compatible with CTF
+// NOTE: USDC_CONTRACT is USDC.e (bridged) — V1 collateral / off-exchange rail.
+//   V2 trading collateral is pUSD (POLYGON_CONTRACTS_V2.pUSD).
+// NATIVE_USDC_CONTRACT is native USDC, NOT compatible with CTF.
+// CTF_EXCHANGE / NEG_RISK_CTF_EXCHANGE are V1 addresses (kept @deprecated
+// for back-compat); new code must consume CTF_EXCHANGE_V2 /
+// NEG_RISK_CTF_EXCHANGE_V2 (or POLYGON_CONTRACTS_V2 directly).
 export {
   CTFClient,
   CTF_CONTRACT,
-  USDC_CONTRACT,           // USDC.e (0x2791...) - Required for CTF
+  USDC_CONTRACT,           // USDC.e (0x2791...) - V1 collateral / off-exchange rail
   NATIVE_USDC_CONTRACT,    // Native USDC (0x3c49...) - NOT for CTF
-  NEG_RISK_CTF_EXCHANGE,
+  NEG_RISK_CTF_EXCHANGE,                  // @deprecated alias for NEG_RISK_CTF_EXCHANGE_V1_DEPRECATED
+  NEG_RISK_CTF_EXCHANGE_V1_DEPRECATED,    // V1 (pre-cutover)
+  NEG_RISK_CTF_EXCHANGE_V2,               // V2 canonical
   NEG_RISK_ADAPTER,
-  CTF_EXCHANGE,
+  CTF_EXCHANGE,                           // @deprecated alias for CTF_EXCHANGE_V1_DEPRECATED
+  CTF_EXCHANGE_V1_DEPRECATED,             // V1 (pre-cutover)
+  CTF_EXCHANGE_V2,                        // V2 canonical
   USDC_DECIMALS,
   calculateConditionId,
   parseUsdc,
@@ -462,6 +470,21 @@ export type {
   TokenIds,
 } from './clients/ctf-client.js';
 export { RevertReason } from './clients/ctf-client.js';
+
+// V2 contract SSOT — re-export so consumers can import the canonical V2
+// addresses (`POLYGON_CONTRACTS_V2.{ctfExchange,negRiskExchange,pUSD,...}`)
+// without reaching into the constants/ module path.
+export {
+  POLYGON_CONTRACTS_V2,
+  POLYGON_CONTRACTS_V1_LEGACY,
+  EIP_712,
+  POLYGON_CHAIN_ID,
+  POLYGON_AMOY_CHAIN_ID,
+} from './constants/v2-contracts.js';
+export type {
+  PolygonContractsV2,
+  Eip712Constants,
+} from './constants/v2-contracts.js';
 
 // Bridge (Cross-chain Deposits)
 export {
@@ -624,6 +647,37 @@ export class PolymarketSDK {
   private _initialized = false;
 
   constructor(config: PolymarketSDKConfig = {}) {
+    // -----------------------------------------------------------------------
+    // V2 migration guard: fail-fast if caller still relies on V1-style HMAC
+    // creds for order signing.
+    //
+    // Background: pre-V2, `builderCreds` (HMAC three-tuple) flowed into the
+    // trading path and produced a HMAC-signed builder header. Post-2026-04-28
+    // V2 cutover, order attribution moved to a bytes32 `builderCode` embedded
+    // directly in the order struct, and HMAC creds are only used for the
+    // Relayer / gasless TX path. TypeScript's structural typing still accepts
+    // an old `{ builderCreds }` config object on `PolymarketSDKConfig` (the
+    // field stays on `PolySDKOptions` because Relayer needs it), so without
+    // an explicit guard the SDK silently drops the old auth and the first
+    // signed order surfaces the V1→V2 drift only at runtime.
+    //
+    // We require: when `builderCreds` is supplied, `builderCode` (or the
+    // `POLY_BUILDER_CODE` env) MUST also be supplied. This catches the
+    // ambiguous "still on the V1 mental model" call sites without breaking
+    // pure-Relayer setups (which would normally not pass `builderCreds`
+    // through `PolymarketSDK`'s constructor anyway).
+    // -----------------------------------------------------------------------
+    if (config.builderCreds && !config.builderCode && !process.env.POLY_BUILDER_CODE) {
+      throw new Error(
+        'PolymarketSDK: `builderCreds` (V1 HMAC three-tuple) is no longer used ' +
+        'for order signing after the 2026-04-28 V2 cutover. Order attribution ' +
+        'is now carried by the bytes32 `builderCode` (Order.builder field). ' +
+        'Set the POLY_BUILDER_CODE env var (32-byte hex) or pass ' +
+        '`builderCode` in `PolymarketSDKConfig` alongside `builderCreds`. ' +
+        'See guide-polymarket-v2-migration for the full migration path.'
+      );
+    }
+
     // Initialize infrastructure
     this.rateLimiter = new RateLimiter();
 
