@@ -12,11 +12,43 @@ import type { TradeEvent, MonitorOptions } from './types.js';
 import { createModuleLogger } from '../core/logger.js';
 import {
   ROUTER_ADDRESSES,
-  MATCH_ORDERS_SELECTOR,
+  MATCH_ORDERS_SELECTOR_V1,
+  MATCH_ORDERS_SELECTOR_V2,
   decodeMatchOrdersCalldata,
   extractTraderAddresses,
   OrderSide,
 } from '../utils/calldata-decoder.js';
+import { POLYGON_CONTRACTS_V2 } from '../constants/v2-contracts.js';
+
+/**
+ * Plan 11 §6 — Settlement TX recipient whitelist.
+ *
+ * Mempool TXs filter on `tx.to` to skip non-settlement traffic before
+ * paying for calldata decode. V1 settlement went through router proxies
+ * (CTF Router / NegRisk Router); V2 settlement goes direct to the V2
+ * exchanges (CTF Exchange / NegRisk CTF Exchange).
+ *
+ * Both V1 and V2 are accepted so the historical-replay path keeps working
+ * during the cutover window when the mempool may carry pending V1 TXs
+ * that were broadcast before 2026-04-28 + still in flight.
+ */
+const SETTLEMENT_RECIPIENTS = new Set<string>([
+  ...Array.from(ROUTER_ADDRESSES),
+  POLYGON_CONTRACTS_V2.ctfExchange.toLowerCase(),
+  POLYGON_CONTRACTS_V2.negRiskExchange.toLowerCase(),
+]);
+
+/**
+ * Both V1 (`0x2287e350`) and V2 (`0x3c2b4399`) `matchOrders` selectors.
+ * `decodeMatchOrdersCalldata` auto-detects the version from the leading
+ * 4 bytes; this prefix gate is just to skip non-settlement calldata cheaply.
+ */
+function hasMatchOrdersSelector(input: string): boolean {
+  return (
+    input.startsWith(MATCH_ORDERS_SELECTOR_V2) ||
+    input.startsWith(MATCH_ORDERS_SELECTOR_V1)
+  );
+}
 
 const log = createModuleLogger('sm-monitor');
 
@@ -246,8 +278,10 @@ export class TradeMonitor extends EventEmitter {
       }
 
       if (typeof tx === 'string') return;
-      if (!tx.to || !ROUTER_ADDRESSES.has(tx.to.toLowerCase())) return;
-      if (!tx.input || !tx.input.startsWith(MATCH_ORDERS_SELECTOR)) return;
+      // Plan 11 §6 — accept BOTH V1 routers (legacy mempool tail) and V2
+      // exchanges (post-cutover). Calldata decode below is V2-aware too.
+      if (!tx.to || !SETTLEMENT_RECIPIENTS.has(tx.to.toLowerCase())) return;
+      if (!tx.input || !hasMatchOrdersSelector(tx.input)) return;
 
       const decoded = decodeMatchOrdersCalldata(tx.input);
       if (!decoded) return;

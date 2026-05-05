@@ -570,11 +570,16 @@ export type { TickSize } from './utils/price-utils.js';
 // Calldata decoder (for mempool pending TX decoding — copy-trading)
 export {
   decodeMatchOrdersCalldata,
+  decodeMatchOrdersCalldataV1,
+  decodeMatchOrdersCalldataV2,
   isSettlementTx,
   extractTraderAddresses,
   CTF_ROUTER,
   NEG_RISK_ROUTER,
+  /** @deprecated alias of MATCH_ORDERS_SELECTOR_V1 — use the explicit version. */
   MATCH_ORDERS_SELECTOR,
+  MATCH_ORDERS_SELECTOR_V1,
+  MATCH_ORDERS_SELECTOR_V2,
   ROUTER_ADDRESSES,
   OrderSide,
 } from './utils/calldata-decoder.js';
