@@ -28,6 +28,7 @@ import {
   USDC_CONTRACT,
   USDC_DECIMALS,
 } from '../clients/ctf-client.js';
+import { POLYGON_CONTRACTS_V2 } from '../constants/v2-contracts.js';
 
 // ============================================================================
 // Types
@@ -94,6 +95,20 @@ const ERC20_ABI = [
 
 const ERC1155_ABI = [
   'function setApprovalForAll(address operator, bool approved) external',
+];
+
+/**
+ * Polymarket V2 Collateral Onramp / Offramp ABI.
+ *
+ * Both endpoints share the same `(address asset, address to, uint256 amount)`
+ * shape. Verified on-chain via selector probe: `wrap = 0x62355638`,
+ * `unwrap = 0x8cc7104f`. See `src/constants/v2-contracts.ts` for source
+ * provenance and the `guide-polymarket-v2-migration` skill for migration
+ * context.
+ */
+const COLLATERAL_RAMP_ABI = [
+  'function wrap(address asset, address to, uint256 amount) external',
+  'function unwrap(address asset, address to, uint256 amount) external',
 ];
 
 // ============================================================================
@@ -258,6 +273,136 @@ export class RelayerService {
         return {
           success: false,
           errorMessage: `USDC approval failed: ${tx?.state || 'No transaction'}`,
+        };
+      }
+
+      return {
+        success: true,
+        txHash: tx.transactionHash,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * Wrap USDC.e → pUSD via the V2 Collateral Onramp (gasless, 1:1, no fee).
+   *
+   * V2 trade settlement uses pUSD as collateral. Each Safe must wrap its
+   * USDC.e holdings to pUSD before placing its first V2 order. This is
+   * relay-encoded so it costs the Safe no gas.
+   *
+   * Pre-conditions (NOT enforced here — caller must ensure):
+   *   1. Safe has approved the Onramp (`POLYGON_CONTRACTS_V2.collateralOnramp`)
+   *      to spend USDC.e on its behalf — see `AuthorizationService.approveAll()`.
+   *   2. Safe has at least `amountWei` USDC.e balance.
+   *
+   * The minted pUSD is delivered to the Safe itself (the Safe is `_to`).
+   *
+   * @param amountWei - amount in USDC.e base units (6 decimals). MUST be
+   *   non-zero; the contract will revert on zero amount.
+   * @returns RelayerResult with transaction status
+   *
+   * @example
+   * ```typescript
+   * // Wrap 100 USDC.e → 100 pUSD on the caller's Safe
+   * const amount = ethers.utils.parseUnits("100", 6);
+   * const r = await relayer.wrapUsdcToPUSD(amount.toBigInt());
+   * ```
+   */
+  async wrapUsdcToPUSD(amountWei: bigint): Promise<RelayerResult> {
+    if (amountWei <= 0n) {
+      return {
+        success: false,
+        errorMessage: 'wrapUsdcToPUSD: amountWei must be > 0',
+      };
+    }
+
+    const safeAddress = await this.getSafeAddress();
+    const rampInterface = new ethers.utils.Interface(COLLATERAL_RAMP_ABI);
+    const data = rampInterface.encodeFunctionData('wrap', [
+      POLYGON_CONTRACTS_V2.usdcE,
+      safeAddress,
+      BigNumber.from(amountWei),
+    ]);
+
+    try {
+      const response = await this.relayClient.execute([{
+        to: POLYGON_CONTRACTS_V2.collateralOnramp,
+        value: '0',
+        data,
+      }]);
+
+      const tx = await response.wait();
+
+      if (!tx || tx.state === RelayerState.FAILED || tx.state === RelayerState.INVALID) {
+        return {
+          success: false,
+          errorMessage: `wrap (USDC.e → pUSD) failed: ${tx?.state || 'No transaction'}`,
+        };
+      }
+
+      return {
+        success: true,
+        txHash: tx.transactionHash,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * Unwrap pUSD → USDC.e via the V2 Collateral Offramp (gasless, 1:1, no fee).
+   *
+   * Reverses {@link wrapUsdcToPUSD}. Useful for `ee wallet collect` flows
+   * that need to drain a strategy Safe back to USDC.e (the canonical
+   * non-trading rail) before transferring to main.
+   *
+   * Pre-conditions (NOT enforced here — caller must ensure):
+   *   1. Safe has approved the Offramp (`POLYGON_CONTRACTS_V2.collateralOfframp`)
+   *      to spend pUSD on its behalf — currently NOT in the default V2
+   *      approval matrix; callers needing unwrap must explicitly approve
+   *      pUSD → Offramp first via the V1-style ERC20 contract call.
+   *   2. Safe has at least `amountWei` pUSD balance.
+   *
+   * @param amountWei - amount in pUSD base units (6 decimals).
+   * @returns RelayerResult with transaction status.
+   */
+  async unwrapPUSDtoUsdc(amountWei: bigint): Promise<RelayerResult> {
+    if (amountWei <= 0n) {
+      return {
+        success: false,
+        errorMessage: 'unwrapPUSDtoUsdc: amountWei must be > 0',
+      };
+    }
+
+    const safeAddress = await this.getSafeAddress();
+    const rampInterface = new ethers.utils.Interface(COLLATERAL_RAMP_ABI);
+    const data = rampInterface.encodeFunctionData('unwrap', [
+      POLYGON_CONTRACTS_V2.usdcE,
+      safeAddress,
+      BigNumber.from(amountWei),
+    ]);
+
+    try {
+      const response = await this.relayClient.execute([{
+        to: POLYGON_CONTRACTS_V2.collateralOfframp,
+        value: '0',
+        data,
+      }]);
+
+      const tx = await response.wait();
+
+      if (!tx || tx.state === RelayerState.FAILED || tx.state === RelayerState.INVALID) {
+        return {
+          success: false,
+          errorMessage: `unwrap (pUSD → USDC.e) failed: ${tx?.state || 'No transaction'}`,
         };
       }
 

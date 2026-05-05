@@ -60,15 +60,41 @@ export const POLYGON_CONTRACTS_V2 = {
   usdcE: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
 
   // -------------------------------------------------------------------------
-  // Onramp (TBD — Polygonscan ABI inspection pending)
+  // Onramp / Offramp (USDC.e ↔ pUSD)
   // -------------------------------------------------------------------------
 
   /**
-   * Collateral Onramp contract — handles USDC.e → pUSD wrapping for end users.
-   * Address pending: see `audits/01-poly-sdk-audit.md` P0-5 / `p0-fix-log` P0-05.
-   * To be filled in PR-C alongside `RelayerService.wrapUsdcToPUSD()` impl.
+   * Collateral Onramp — handles USDC.e → pUSD wrapping (1:1, no fee).
+   *
+   * Sourced from Polymarket V2 docs (`docs.polymarket.com/resources/contracts`)
+   * and verified on-chain: bytecode exposes `wrap(address,address,uint256)`
+   * (selector `0x62355638`) and `COLLATERAL_TOKEN()` returns the pUSD proxy.
+   *
+   * ABI (verified via on-chain selector probe + docs):
+   *   `wrap(address asset, address to, uint256 amount)` — pulls `amount` of
+   *   `asset` (must be USDC.e) from caller and mints the same amount of pUSD
+   *   to `to`. Caller MUST `approve(onramp, amount)` on USDC.e first.
+   *
+   * Used by `RelayerService.wrapUsdcToPUSD()` (Safe → Onramp.wrap, gasless).
    */
-  // collateralOnramp: '0x...',
+  collateralOnramp: '0x93070a847efEf7F70739046A929D47a521F5B8ee',
+
+  /**
+   * Collateral Offramp — handles pUSD → USDC.e unwrapping (1:1, no fee).
+   *
+   * Distinct from the Onramp on V2 (V1 had no equivalent — USDC.e was the
+   * collateral directly). Verified on-chain: bytecode exposes
+   * `unwrap(address,address,uint256)` (selector `0x8cc7104f`) and
+   * `COLLATERAL_TOKEN()` returns the same pUSD proxy as the Onramp.
+   *
+   * ABI:
+   *   `unwrap(address asset, address to, uint256 amount)` — burns `amount` of
+   *   pUSD from caller and releases the same amount of `asset` (must be
+   *   USDC.e) to `to`. Caller MUST `approve(offramp, amount)` on pUSD first.
+   *
+   * Used by `RelayerService.unwrapPUSDtoUsdc()` (Safe → Offramp.unwrap).
+   */
+  collateralOfframp: '0x2957922Eb93258b93368531d39fAcCA3B4dC5854',
 } as const;
 
 /**
