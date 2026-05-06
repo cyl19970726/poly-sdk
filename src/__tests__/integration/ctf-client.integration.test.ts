@@ -19,7 +19,7 @@ import { ethers } from 'ethers';
 import {
   CTF_CONTRACT,
   USDC_CONTRACT,
-  NEG_RISK_CTF_EXCHANGE,
+  NEG_RISK_CTF_EXCHANGE_V2,
   NEG_RISK_ADAPTER,
   USDC_DECIMALS,
 } from '../../clients/ctf-client.js';
@@ -104,12 +104,12 @@ describe('CTF Contract Verification', () => {
     }, 30000);
 
     it('should verify NegRisk CTF Exchange contract exists', async () => {
-      const code = await provider.getCode(NEG_RISK_CTF_EXCHANGE);
+      const code = await provider.getCode(NEG_RISK_CTF_EXCHANGE_V2);
 
       expect(code).not.toBe('0x');
       expect(code.length).toBeGreaterThan(10);
 
-      console.log(`✓ NegRisk CTF Exchange verified at ${NEG_RISK_CTF_EXCHANGE}`);
+      console.log(`✓ NegRisk CTF Exchange verified at ${NEG_RISK_CTF_EXCHANGE_V2}`);
       console.log(`  Contract code size: ${(code.length - 2) / 2} bytes`);
     }, 30000);
   });
@@ -322,7 +322,7 @@ describe('CTF Architecture Understanding', () => {
     console.log('  - Handles NO → YES conversions');
     console.log('');
     console.log('NegRisk CTF Exchange:');
-    console.log(`  ${NEG_RISK_CTF_EXCHANGE}`);
+    console.log(`  ${NEG_RISK_CTF_EXCHANGE_V2}`);
     console.log('  - Trading for NegRisk markets');
 
     // This test always passes - it's documentation

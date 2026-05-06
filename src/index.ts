@@ -435,23 +435,19 @@ export type {
 // TradingService provides all trading functionality with proper type exports
 
 // CTF (Conditional Token Framework)
-// NOTE: USDC_CONTRACT is USDC.e (bridged) — V1 collateral / off-exchange rail.
+// NOTE: USDC_CONTRACT is USDC.e (bridged) — off-exchange / fund-flow rail.
 //   V2 trading collateral is pUSD (POLYGON_CONTRACTS_V2.pUSD).
 // NATIVE_USDC_CONTRACT is native USDC, NOT compatible with CTF.
-// CTF_EXCHANGE / NEG_RISK_CTF_EXCHANGE are V1 addresses (kept @deprecated
-// for back-compat); new code must consume CTF_EXCHANGE_V2 /
-// NEG_RISK_CTF_EXCHANGE_V2 (or POLYGON_CONTRACTS_V2 directly).
+// V1 exchange aliases (CTF_EXCHANGE / NEG_RISK_CTF_EXCHANGE) have been
+// removed at the V2-only cutover; consume CTF_EXCHANGE_V2 /
+// NEG_RISK_CTF_EXCHANGE_V2 or POLYGON_CONTRACTS_V2 directly.
 export {
   CTFClient,
   CTF_CONTRACT,
-  USDC_CONTRACT,           // USDC.e (0x2791...) - V1 collateral / off-exchange rail
+  USDC_CONTRACT,           // USDC.e (0x2791...) - off-exchange rail
   NATIVE_USDC_CONTRACT,    // Native USDC (0x3c49...) - NOT for CTF
-  NEG_RISK_CTF_EXCHANGE,                  // @deprecated alias for NEG_RISK_CTF_EXCHANGE_V1_DEPRECATED
-  NEG_RISK_CTF_EXCHANGE_V1_DEPRECATED,    // V1 (pre-cutover)
   NEG_RISK_CTF_EXCHANGE_V2,               // V2 canonical
   NEG_RISK_ADAPTER,
-  CTF_EXCHANGE,                           // @deprecated alias for CTF_EXCHANGE_V1_DEPRECATED
-  CTF_EXCHANGE_V1_DEPRECATED,             // V1 (pre-cutover)
   CTF_EXCHANGE_V2,                        // V2 canonical
   USDC_DECIMALS,
   calculateConditionId,
@@ -476,7 +472,6 @@ export { RevertReason } from './clients/ctf-client.js';
 // without reaching into the constants/ module path.
 export {
   POLYGON_CONTRACTS_V2,
-  POLYGON_CONTRACTS_V1_LEGACY,
   EIP_712,
   POLYGON_CHAIN_ID,
   POLYGON_AMOY_CHAIN_ID,
@@ -576,8 +571,6 @@ export {
   extractTraderAddresses,
   CTF_ROUTER,
   NEG_RISK_ROUTER,
-  /** @deprecated alias of MATCH_ORDERS_SELECTOR_V1 — use the explicit version. */
-  MATCH_ORDERS_SELECTOR,
   MATCH_ORDERS_SELECTOR_V1,
   MATCH_ORDERS_SELECTOR_V2,
   ROUTER_ADDRESSES,

@@ -1,13 +1,12 @@
 /**
  * Unit tests for V2 Relayer collateral-token routing.
  *
- * After the 2026-04-28 V2 cutover, trading collateral is `pUSD`. The relayer
- * helpers (`approveUsdc`, `transferUsdc`, `split`, `merge`, `redeem`,
- * `redeemBatch`) used to hardcode V1 USDC.e for the collateral argument /
- * `to` field, which would revert against V2 markets. The fix introduces a
- * `CollateralToken` parameter on each function (default `'pUSD'`) that
- * routes the call to the correct ERC-20 contract via
- * `POLYGON_CONTRACTS_V2.{pUSD,usdcE}`.
+ * After the 2026-04-28 V2 cutover, trading collateral is `pUSD`. The
+ * trading-related relayer helpers (`split`, `merge`, `redeem`, `redeemBatch`)
+ * hardcode pUSD as the on-chain collateral argument. The off-exchange
+ * helpers (`approveUsdc`, `transferUsdc`) accept a `CollateralToken`
+ * parameter so they can route to either pUSD (V2 trading collateral, the
+ * default) or USDC.e (Onramp approval / fund-out collect path).
  *
  * These tests assert the routing behaviour by capturing the encoded
  * transaction the service emits to a mocked relay client.
@@ -97,7 +96,7 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// approveUsdc
+// approveUsdc — token routing (pUSD default + USDC.e for Onramp)
 // ---------------------------------------------------------------------------
 
 describe('RelayerService.approveUsdc — token routing', () => {
@@ -120,7 +119,7 @@ describe('RelayerService.approveUsdc — token routing', () => {
 });
 
 // ---------------------------------------------------------------------------
-// transferUsdc
+// transferUsdc — token routing (pUSD default + USDC.e for fund-out)
 // ---------------------------------------------------------------------------
 
 describe('RelayerService.transferUsdc — token routing', () => {
@@ -145,11 +144,11 @@ describe('RelayerService.transferUsdc — token routing', () => {
 });
 
 // ---------------------------------------------------------------------------
-// split / merge
+// split / merge — pUSD only (V2 trading collateral)
 // ---------------------------------------------------------------------------
 
-describe('RelayerService.split — token routing', () => {
-  it('defaults to pUSD as the splitPosition collateral arg', async () => {
+describe('RelayerService.split — pUSD-only collateral', () => {
+  it('encodes pUSD as the splitPosition collateral arg (V2)', async () => {
     const svc = makeService();
     const r = await svc.split(TEST_CONDITION_ID, '10');
     expect(r.success).toBe(true);
@@ -158,19 +157,10 @@ describe('RelayerService.split — token routing', () => {
     const decoded = CTF_IFACE.decodeFunctionData('splitPosition', capturedExecute!.txs[0].data);
     expect(decoded.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.pUSD.toLowerCase());
   });
-
-  it("encodes USDC.e as collateral when token === 'USDC.e'", async () => {
-    const svc = makeService();
-    const r = await svc.split(TEST_CONDITION_ID, '10', false, 'USDC.e');
-    expect(r.success).toBe(true);
-
-    const decoded = CTF_IFACE.decodeFunctionData('splitPosition', capturedExecute!.txs[0].data);
-    expect(decoded.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.usdcE.toLowerCase());
-  });
 });
 
-describe('RelayerService.merge — token routing', () => {
-  it('defaults to pUSD as the mergePositions collateral arg', async () => {
+describe('RelayerService.merge — pUSD-only collateral', () => {
+  it('encodes pUSD as the mergePositions collateral arg (V2)', async () => {
     const svc = makeService();
     const r = await svc.merge(TEST_CONDITION_ID, '10');
     expect(r.success).toBe(true);
@@ -179,23 +169,14 @@ describe('RelayerService.merge — token routing', () => {
     const decoded = CTF_IFACE.decodeFunctionData('mergePositions', capturedExecute!.txs[0].data);
     expect(decoded.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.pUSD.toLowerCase());
   });
-
-  it("encodes USDC.e as collateral when token === 'USDC.e'", async () => {
-    const svc = makeService();
-    const r = await svc.merge(TEST_CONDITION_ID, '10', false, 'USDC.e');
-    expect(r.success).toBe(true);
-
-    const decoded = CTF_IFACE.decodeFunctionData('mergePositions', capturedExecute!.txs[0].data);
-    expect(decoded.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.usdcE.toLowerCase());
-  });
 });
 
 // ---------------------------------------------------------------------------
-// redeem / redeemBatch
+// redeem / redeemBatch — pUSD only (V2 trading collateral)
 // ---------------------------------------------------------------------------
 
-describe('RelayerService.redeem — token routing', () => {
-  it('defaults to pUSD on the standard CTF redeem path', async () => {
+describe('RelayerService.redeem — pUSD-only collateral', () => {
+  it('encodes pUSD on the standard CTF redeem path (V2)', async () => {
     const svc = makeService();
     const r = await svc.redeem(TEST_CONDITION_ID, 'YES');
     expect(r.success).toBe(true);
@@ -208,21 +189,8 @@ describe('RelayerService.redeem — token routing', () => {
     expect(decoded.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.pUSD.toLowerCase());
   });
 
-  it("encodes USDC.e on the standard CTF redeem path when token === 'USDC.e'", async () => {
-    const svc = makeService();
-    const r = await svc.redeem(TEST_CONDITION_ID, 'NO', false, 'USDC.e');
-    expect(r.success).toBe(true);
-
-    const decoded = CTF_IFACE.decodeFunctionData(
-      'redeemPositions',
-      capturedExecute!.txs[0].data
-    );
-    expect(decoded.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.usdcE.toLowerCase());
-  });
-
-  it('routes through NEG_RISK_ADAPTER for negRisk markets (token arg ignored)', async () => {
+  it('routes through NEG_RISK_ADAPTER for negRisk markets (no collateral arg on adapter)', async () => {
     // NegRisk adapter doesn't take a collateral arg in redeemPositions.
-    // We just assert routing target.
     const svc = makeService();
     const r = await svc.redeem(TEST_CONDITION_ID, 'YES', true);
     expect(r.success).toBe(true);
@@ -230,8 +198,8 @@ describe('RelayerService.redeem — token routing', () => {
   });
 });
 
-describe('RelayerService.redeemBatch — token routing', () => {
-  it('defaults each standard CTF entry to pUSD', async () => {
+describe('RelayerService.redeemBatch — pUSD-only collateral', () => {
+  it('encodes pUSD on every standard CTF entry', async () => {
     const svc = makeService();
     const r = await svc.redeemBatch([
       { conditionId: TEST_CONDITION_ID, outcome: 'YES' },
@@ -245,26 +213,5 @@ describe('RelayerService.redeemBatch — token routing', () => {
       const decoded = CTF_IFACE.decodeFunctionData('redeemPositions', tx.data);
       expect(decoded.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.pUSD.toLowerCase());
     }
-  });
-
-  it('honors per-entry token override (mixed pUSD + USDC.e batch)', async () => {
-    const svc = makeService();
-    const r = await svc.redeemBatch([
-      { conditionId: TEST_CONDITION_ID, outcome: 'YES' /* default pUSD */ },
-      { conditionId: TEST_CONDITION_ID, outcome: 'NO', token: 'USDC.e' },
-    ]);
-    expect(r.success).toBe(true);
-    expect(capturedExecute!.txs).toHaveLength(2);
-
-    const first = CTF_IFACE.decodeFunctionData(
-      'redeemPositions',
-      capturedExecute!.txs[0].data
-    );
-    const second = CTF_IFACE.decodeFunctionData(
-      'redeemPositions',
-      capturedExecute!.txs[1].data
-    );
-    expect(first.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.pUSD.toLowerCase());
-    expect(second.collateralToken.toLowerCase()).toBe(POLYGON_CONTRACTS_V2.usdcE.toLowerCase());
   });
 });

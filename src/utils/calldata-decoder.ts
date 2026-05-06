@@ -36,15 +36,17 @@ import { ethers } from 'ethers';
 /**
  * V1 CTF Router (FeeModule) — V1-era operators sent settlement TXs here.
  *
- * @deprecated Retained for historical-calldata decoding only. V2 settlement
+ * Retained for historical-calldata decoding only — production V2 settlement
  * goes directly to the V2 CTF Exchange (`POLYGON_CONTRACTS_V2.ctfExchange`).
+ * The smart-money mempool monitor (`smart-money/monitor.ts`) still accepts
+ * this router as a valid `tx.to` recipient so the cutover-tail / historical
+ * replay paths keep decoding pre-2026-04-28 settlement TXs.
  */
 export const CTF_ROUTER = '0xE3f18aCc55091e2c48d883fc8C8413319d4Ab7b0';
 
 /**
- * V1 NegRisk Router (FeeModule).
- *
- * @deprecated Same caveat as `CTF_ROUTER`.
+ * V1 NegRisk Router (FeeModule). Same role as {@link CTF_ROUTER} for
+ * NegRisk markets.
  */
 export const NEG_RISK_ROUTER = '0xB768891e3130F6dF18214Ac804d4DB76c2C37730';
 
@@ -60,13 +62,6 @@ export const MATCH_ORDERS_SELECTOR_V1 = '0x2287e350';
  *   - V2 SDK `ExchangeOrderBuilderV2` order struct (matches the tuple shape)
  */
 export const MATCH_ORDERS_SELECTOR_V2 = '0x3c2b4399';
-
-/**
- * @deprecated Backward-compat alias for `MATCH_ORDERS_SELECTOR_V1`. Existing
- * callers (smart-money copy-trading) hard-code this constant; keeping the
- * alias prevents an API break while V2 fixtures are integrated.
- */
-export const MATCH_ORDERS_SELECTOR = MATCH_ORDERS_SELECTOR_V1;
 
 /**
  * Set of router addresses (lowercase) for quick lookup.

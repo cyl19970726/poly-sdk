@@ -1,9 +1,11 @@
 /**
  * Polymarket CLOB V2 Contract Constants (SSOT)
  * ----------------------------------------------------------------------------
- * V2 cutover: 2026-04-28 (UTC). All legacy V1 CTF Exchange / NegRisk Exchange
- * addresses below are kept ONLY as `@deprecated` references for migration
- * traceability — production callers MUST consume the V2 addresses.
+ * V2 cutover: 2026-04-28 (UTC). V1 surfaces have been removed — production
+ * code MUST consume the V2 addresses below. The only remaining V1 traces
+ * live in `utils/calldata-decoder.ts` (CTF_ROUTER / NEG_RISK_ROUTER /
+ * MATCH_ORDERS_SELECTOR_V1) and exist solely to decode pre-cutover
+ * settlement TXs that may still surface in mempool tail / historical replay.
  *
  * Verified sources:
  *   - V2 SDK source (`@polymarket/clob-client-v2@1.0.3`):
@@ -12,7 +14,6 @@
  *
  * Migration plan: see `earning-engine/.claude/skills/guide-polymarket-v2-migration/`
  *   - `plans/02-poly-sdk-migration.md`        — overall workstream
- *   - `plans/12-poly-sdk-pr-templates.md` §PR-A — this PR's scope
  *   - `audits/01-poly-sdk-audit.md`            — provenance for each address
  */
 
@@ -98,27 +99,13 @@ export const POLYGON_CONTRACTS_V2 = {
 } as const;
 
 /**
- * Legacy V1 addresses (for reference / grep traceability).
- *
- * @deprecated Do not consume from production paths. V1 CLOB rejects all
- * V1-signed orders since 2026-04-28. These are kept here so that searches
- * for old addresses still surface a single SSOT result.
- */
-export const POLYGON_CONTRACTS_V1_LEGACY = {
-  /** @deprecated Replaced by `POLYGON_CONTRACTS_V2.ctfExchange`. */
-  ctfExchange: '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E',
-  /** @deprecated Replaced by `POLYGON_CONTRACTS_V2.negRiskExchange`. */
-  negRiskExchange: '0xC5d563A36AE78145C45a50134d48A1215220f80a',
-} as const;
-
-/**
  * EIP-712 domain version constants.
  *
  * The Polymarket protocol exposes TWO independent EIP-712 domains:
  *
- *   1. CTF Exchange domain — used to sign on-chain order structs.
- *      Bumped from "1" → "2" at the V2 cutover. Order signing MUST use
- *      `domainVersionV2`.
+ *   1. CTF Exchange domain — used to sign on-chain order structs. V2 uses
+ *      `domainVersionV2 = "2"` (the V1 `"1"` domain has been retired and is
+ *      not surfaced here).
  *
  *   2. ClobAuthDomain — used to sign API auth challenges (HMAC bootstrap
  *      and L1 header generation). UNCHANGED at V2: still `"1"`.
@@ -131,9 +118,6 @@ export const POLYGON_CONTRACTS_V1_LEGACY = {
 export const EIP_712 = {
   /** Domain `name` for CTF Exchange (UNCHANGED across V1/V2). */
   domainName: 'Polymarket CTF Exchange',
-
-  /** @deprecated V1 CTF Exchange domain version — kept for hash parity tests only. */
-  domainVersionV1: '1',
 
   /** V2 CTF Exchange domain version — production order signing MUST use this. */
   domainVersionV2: '2',

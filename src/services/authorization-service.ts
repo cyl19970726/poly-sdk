@@ -58,12 +58,6 @@ export interface AllowancesResult {
   pusdBalance: string;
   /** Wallet's USDC.e balance (off-exchange rail). */
   usdcEBalance: string;
-  /**
-   * @deprecated Use `pusdBalance` for V2 trading-readiness. Kept as an alias of
-   * `pusdBalance` so older readers don't break; the field name predates the
-   * V2 cutover where USDC.e was the trading collateral.
-   */
-  usdcBalance: string;
   erc20Allowances: AllowanceInfo[];
   erc1155Approvals: AllowanceInfo[];
   tradingReady: boolean;
@@ -250,8 +244,6 @@ export class AuthorizationService {
       wallet: walletAddress,
       pusdBalance,
       usdcEBalance,
-      // Backward-compat: alias of `pusdBalance` (V2 trading collateral).
-      usdcBalance: pusdBalance,
       erc20Allowances,
       erc1155Approvals,
       tradingReady,

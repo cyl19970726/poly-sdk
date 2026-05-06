@@ -32,7 +32,7 @@ import { POLYGON_CONTRACTS_V2 } from '../constants/v2-contracts.js';
 export const CTF_CONTRACT = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045';
 
 /**
- * USDC.e (Bridged USDC) - V1 collateral / off-exchange rail.
+ * USDC.e (Bridged USDC) — off-exchange / fund-flow rail.
  *
  * ⚠️ WARNING: This is NOT native USDC (0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359)
  *
@@ -40,31 +40,13 @@ export const CTF_CONTRACT = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045';
  * (`POLYGON_CONTRACTS_V2.pUSD`); USDC.e remains in use only for
  * Onramp/Offramp wrap-unwrap and Safe-to-Safe transfers. Strategy code
  * placing V2 orders MUST consume the pUSD address from
- * `POLYGON_CONTRACTS_V2.pUSD` (or its alias `POLYMARKET_COLLATERAL_V2`
- * exported below) — this constant only encodes the bridged-USDC rail.
+ * `POLYGON_CONTRACTS_V2.pUSD` — this constant only encodes the
+ * bridged-USDC rail.
  */
 export const USDC_CONTRACT = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 
 /** Native USDC on Polygon - NOT compatible with CTF */
 export const NATIVE_USDC_CONTRACT = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
-
-/**
- * V1 NegRisk CTF Exchange address.
- *
- * @deprecated Replaced by `POLYGON_CONTRACTS_V2.negRiskExchange` (or its
- * alias {@link NEG_RISK_CTF_EXCHANGE_V2}) at the 2026-04-28 V2 cutover.
- * V1 CLOB rejects all V1-signed orders since cutover. This export is
- * retained ONLY so legacy call sites compile; new code MUST consume the
- * V2 address.
- */
-export const NEG_RISK_CTF_EXCHANGE_V1_DEPRECATED = '0xC5d563A36AE78145C45a50134d48A1215220f80a';
-
-/**
- * @deprecated Alias for {@link NEG_RISK_CTF_EXCHANGE_V1_DEPRECATED}.
- * Will keep value-equal to the V1 address until the alias is removed in a
- * follow-up major. New code should import {@link NEG_RISK_CTF_EXCHANGE_V2}.
- */
-export const NEG_RISK_CTF_EXCHANGE = NEG_RISK_CTF_EXCHANGE_V1_DEPRECATED;
 
 /**
  * V2 NegRisk CTF Exchange (canonical post-cutover).
@@ -77,24 +59,6 @@ export const NEG_RISK_CTF_EXCHANGE_V2 = POLYGON_CONTRACTS_V2.negRiskExchange;
 
 /** NegRisk Adapter — wraps multi-outcome markets. UNCHANGED from V1. */
 export const NEG_RISK_ADAPTER = '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296';
-
-/**
- * V1 CTF Exchange address — Polymarket order matching contract for standard
- * markets, pre-V2 era.
- *
- * @deprecated Replaced by `POLYGON_CONTRACTS_V2.ctfExchange` (or its alias
- * {@link CTF_EXCHANGE_V2}) at the 2026-04-28 V2 cutover. V1 CLOB rejects
- * all V1-signed orders since cutover. This export is retained ONLY so
- * legacy call sites compile; new code MUST consume the V2 address.
- */
-export const CTF_EXCHANGE_V1_DEPRECATED = '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E';
-
-/**
- * @deprecated Alias for {@link CTF_EXCHANGE_V1_DEPRECATED}.
- * Will keep value-equal to the V1 address until the alias is removed in a
- * follow-up major. New code should import {@link CTF_EXCHANGE_V2}.
- */
-export const CTF_EXCHANGE = CTF_EXCHANGE_V1_DEPRECATED;
 
 /**
  * V2 CTF Exchange (canonical post-cutover).
