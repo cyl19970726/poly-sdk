@@ -1,7 +1,7 @@
 # ArbitrageService E2E Test Plan
 
 > **Status**: In Progress
-> **Date**: 2024-12-24
+> **Date**: 2026-06-20
 > **Author**: Claude Code
 
 ## Overview
@@ -18,7 +18,7 @@ Polymarket orderbooks have a critical property that's often misunderstood:
 Buy YES @ P = Sell NO @ (1-P)
 ```
 
-This means **the same order appears in both orderbooks**. Naive addition of prices leads to incorrect calculations.
+This means complementary liquidity can be matched through the opposite outcome view. Naive addition of prices can double-count executable liquidity.
 
 ### Effective Prices
 
@@ -41,12 +41,12 @@ shortProfit = shortRevenue - 1  // > 0 means arbitrage exists
 ### Why We Need the Rebalancer
 
 Arbitrage execution requires:
-- **Long Arb**: USDC to buy tokens
+- **Long Arb**: pUSD to buy tokens
 - **Short Arb**: YES + NO tokens to sell
 
 The Rebalancer maintains the optimal ratio:
-- USDC < 20% → Merge tokens to recover USDC
-- USDC > 80% → Split USDC to create tokens
+- pUSD < 20% → Merge tokens to recover pUSD
+- pUSD > 80% → Split pUSD to create tokens
 
 ### Partial Fill Protection
 
@@ -54,6 +54,16 @@ When buying both YES and NO in parallel, one order might succeed while the other
 - `sizeSafetyFactor = 0.8` → Use only 80% of orderbook depth
 - `autoFixImbalance = true` → Auto-sell excess if imbalance occurs
 - `imbalanceThreshold = 5` → Trigger fix when YES-NO diff > $5
+
+### Production Constraints
+
+Arbitrage detection is only executable when it includes:
+- depth-aware VWAP for the intended size, not just top-of-book
+- net profit after CLOB platform fees and builder fees
+- explicit data source freshness checks
+- FOK/FAK or equivalent partial-fill protection
+- post-only only for maker quoting, not immediate arbitrage execution
+- NegRisk group validation before any multi-outcome sum strategy
 
 ---
 
@@ -65,6 +75,11 @@ When buying both YES and NO in parallel, one order might succeed while the other
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  • getEffectivePrices() - Correct calculation of effective prices            │
 │  • checkArbitrage() - Correct arbitrage detection                            │
+│  • checkArbitrageWithFees() - Reject gross-only false positives               │
+│  • estimateOrderFees() - Platform/builder fee math and rounding               │
+│  • TradingService postOnly API passthrough and batch consistency              │
+│  • no false positives from normal mirrored spread                             │
+│  • VWAP/depth sizing for target notional                                      │
 │  • calculateRebalanceAction() - Rebalance strategy logic                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Level 2: Integration Tests (Network, No Private Key)                        │
@@ -72,12 +87,15 @@ When buying both YES and NO in parallel, one order might succeed while the other
 │  • scanMarkets() - Market scanning and filtering                             │
 │  • WebSocket subscription - Real-time orderbook updates                      │
 │  • checkOpportunity() - Opportunity detection with real data                 │
+│  • getClobMarketInfo() fee config is loaded for executable candidates          │
+│  • NegRisk group validation and stale/depth-missing rejection                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Level 3: E2E Tests (Real Market, With Private Key)                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  • Wallet connection and balance query                                       │
 │  • CTF Split/Merge operations                                                │
 │  • Order execution (small amounts)                                           │
+│  • FOK/FAK execution rejects unsafe partial fills                             │
 │  • Rebalancer functionality                                                  │
 │  • clearPositions() smart clearing                                           │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -127,17 +145,93 @@ shortRevenue ≈ 0.96-0.98
 // Expected: No arbitrage opportunity
 ```
 
-#### Test 1.5: Rebalance Action Calculation
+#### Test 1.5: No False Positive From Mirrored Spread
 ```typescript
-// Scenario: USDC too low
+// Wide but normal mirrored market
+yesBid = 0.40
+yesAsk = 0.65
+noAsk = 1 - yesBid // 0.60
+noBid = 1 - yesAsk // 0.35
+
+// Naive sums look far from 1:
+askSum = 1.25
+bidSum = 0.75
+
+// Expected:
+// longCost = 0.65 + 0.60 = 1.25, longProfit = -0.25
+// shortRevenue = 0.40 + 0.35 = 0.75, shortProfit = -0.25
+// checkArbitrage() returns null
+```
+
+#### Test 1.6: Depth-Aware VWAP
+```typescript
+// Target: buy 1000 YES
+asks = [
+  { price: 0.30, size: 5 },
+  { price: 0.32, size: 1000 },
+  { price: 0.35, size: 2000 },
+]
+
+// Expected:
+// filled = 1000
+// vwap = (0.30 * 5 + 0.32 * 995) / 1000 = 0.3199
+// executable price is not 0.30
+```
+
+#### Test 1.7: Fee-Aware Arbitrage Rejection
+```typescript
+// Gross long candidate:
+yesAsk = 0.495
+noAsk = 0.495
+grossProfitPerShare = 1 - (0.495 + 0.495) = 0.01
+
+// With sports-style fee rate:
+size = 10
+feeRate = 0.03
+estimatedFees ≈ 0.15
+grossProfit = 0.10
+netProfit ≈ -0.05
+
+// Expected:
+// checkArbitrage() may return a gross candidate
+// checkArbitrageWithFees(..., { size, rate: 0.03 }) returns null
+```
+
+#### Test 1.8: Order Fee Estimate
+```typescript
+// 100 shares at 50c with fee rate 0.03:
+platformFee = 100 * 0.03 * 0.5 * 0.5 = 0.75
+
+// Expected:
+// BUY totalCost = 50.75
+// SELL netProceeds = 49.25
+// Maker fill with takerOnly=true has platformFee = 0
+```
+
+#### Test 1.9: Post-Only API Passthrough
+```typescript
+// Expected:
+// createLimitOrder({ orderType: 'GTC', postOnly: true }) calls
+// client.createAndPostOrder(order, options, OrderType.GTC, true)
+//
+// presignLimitOrder({ postOnly: true }) stores postOnly in the PresignedOrder,
+// and postPresignedOrder(presigned) calls client.postOrder(signed, orderType, true).
+//
+// createBatchOrders() rejects mixed postOnly values because CLOB postOrders()
+// accepts a batch-level postOnly flag.
+```
+
+#### Test 1.10: Rebalance Action Calculation
+```typescript
+// Scenario: pUSD too low
 usdc = 10, yesTokens = 80, noTokens = 80
 usdcRatio = 10 / (10 + 80) = 0.11 < 0.20
-// Expected: action = 'merge', reason = 'USDC 11% < 20% min'
+// Expected: action = 'merge', reason = 'pUSD 11% < 20% min'
 
-// Scenario: USDC too high
+// Scenario: pUSD too high
 usdc = 90, yesTokens = 10, noTokens = 10
 usdcRatio = 90 / (90 + 10) = 0.90 > 0.80
-// Expected: action = 'split', reason = 'USDC 90% > 80% max'
+// Expected: action = 'split', reason = 'pUSD 90% > 80% max'
 
 // Scenario: Token imbalance
 yesTokens = 60, noTokens = 45
@@ -155,13 +249,19 @@ const service = new ArbitrageService({ enableLogging: true });
 
 const results = await service.scanMarkets({
   minVolume24h: 5000,
-  limit: 20
+  limit: 20,
+  feeAware: true,
+  feeEstimateSize: 1,
+  liquidityRole: 'taker'
 }, 0.005);
 
 // Verify:
 // - Returns array of ScanResult
 // - Each result has valid market config
 // - Effective prices are calculated correctly
+// - Default profitRate/profitPercent are net after estimated fees
+// - grossProfitRate/netProfitRate/totalFees are populated
+// - Any executable opportunity includes size and VWAP, not only top-of-book
 // - Score is computed based on profit * volume
 ```
 
@@ -196,6 +296,35 @@ const opportunity = service.checkOpportunity();
 // - profitRate > 0
 // - recommendedSize respects config limits
 // - description is accurate
+// - stale or depth-missing books are rejected or marked nonExecutable
+```
+
+#### Test 2.4: NegRisk Group Validation
+```typescript
+const event = await gammaApi.getEvent(eventId);
+const markets = event.markets;
+
+// Verify before ΣYES strategy:
+// - every market has negRisk === true
+// - all markets share the same event / negRiskMarketId
+// - outcome set includes the full mutually exclusive result space
+// - resolution rules are consistent
+// - ambiguous / void-prone markets are rejected
+```
+
+#### Test 2.5: Multi-Outcome Depth Check
+```typescript
+// For each market in a candidate NegRisk group:
+// - load live orderbook for the YES token
+// - load getClobMarketInfo(conditionId) for each leg's fd/mbf/tbf
+// - compute VWAP for target size
+// - use the thinnest leg to cap recommended size
+// - compute net profit with estimateMultiLegArbitrageFees() plus gas/failure buffer
+
+// Expected:
+// - no opportunity is executable unless every leg has sufficient depth
+// - profit is based on VWAP, not Gamma outcomePrices alone
+// - positive gross ΣYES deviations can be rejected after fees
 ```
 
 ---
@@ -215,7 +344,7 @@ await service.start(results[0].market);
 
 // Verify:
 const balance = service.getBalance();
-console.log(`USDC: ${balance.usdc}`);
+console.log(`pUSD: ${balance.usdc}`);
 console.log(`YES: ${balance.yesTokens}`);
 console.log(`NO: ${balance.noTokens}`);
 
@@ -231,12 +360,12 @@ const ctf = new CTFClient({
 });
 
 // Split a small amount
-const splitResult = await ctf.split(conditionId, '5'); // $5 USDC
+const splitResult = await ctf.split(conditionId, '5'); // $5 pUSD
 
 // Verify:
 // - txHash is returned
 // - Balance now has 5 YES + 5 NO tokens
-// - USDC decreased by $5
+// - pUSD decreased by $5
 ```
 
 #### Test 3.3: CTF Merge Operation
@@ -252,7 +381,7 @@ const mergeResult = await ctf.mergeByTokenIds(conditionId, tokenIds, '5');
 // Verify:
 // - txHash is returned
 // - YES and NO tokens decreased by 5
-// - USDC increased by $5
+// - pUSD increased by $5
 ```
 
 #### Test 3.4: Order Execution
@@ -261,7 +390,7 @@ const mergeResult = await ctf.mergeByTokenIds(conditionId, tokenIds, '5');
 const buyResult = await tradingClient.createMarketOrder({
   tokenId: market.yesTokenId,
   side: 'BUY',
-  amount: 5, // $5 USDC
+  amount: 5, // $5 pUSD notional
   orderType: 'FOK',
 });
 
@@ -281,7 +410,7 @@ const service = new ArbitrageService({
   targetUsdcRatio: 0.5,
 });
 
-// Create imbalanced state (e.g., split all USDC)
+// Create imbalanced state (e.g., split all pUSD)
 // Then let rebalancer run
 
 // Verify:
@@ -299,8 +428,20 @@ console.log('Expected recovery:', clearResult.totalUsdcRecovered);
 
 // If executing:
 const executeResult = await service.clearPositions(market, true);
-// - Merged tokens are recovered as USDC
+// - Merged tokens are recovered as pUSD
 // - Unpaired tokens are sold
+```
+
+#### Test 3.7: Atomic Execution Guard
+```typescript
+// Submit a small multi-leg plan using FOK/FAK settings.
+// Use a deliberately tight maxSlippageBps or oversized target to force rejection.
+
+// Verify:
+// - unsafe leg is cancelled/rejected
+// - successful partial state is detected
+// - auto-fix / clearPositions plan is produced if imbalance remains
+// - no subsequent legs execute after minProfitAfterFees is violated
 ```
 
 ---
@@ -360,11 +501,16 @@ PROFIT_THRESHOLD = 0   // Monitor all opportunities
 | Test Level | Criteria |
 |------------|----------|
 | Unit | All calculations match expected values |
+| Unit | Mirrored spread scenarios do not produce false arbitrage |
+| Unit | VWAP/depth sizing differs from top-of-book when first level is thin |
 | Integration | Market scanning returns valid results |
 | Integration | WebSocket receives orderbook updates |
+| Integration | NegRisk groups are validated before multi-outcome pricing |
+| Integration | Stale or incomplete orderbooks are not marked executable |
 | E2E | Wallet balance is correctly queried |
 | E2E | Split/Merge operations succeed |
 | E2E | Order execution works |
+| E2E | FOK/FAK guards prevent unsafe partial execution |
 | E2E | clearPositions recovers funds |
 
 ---
@@ -374,7 +520,9 @@ PROFIT_THRESHOLD = 0   // Monitor all opportunities
 1. **Financial Risk**: Test with small amounts ($5-20 max)
 2. **Execution Risk**: Always dry-run first
 3. **Network Risk**: Handle errors gracefully
-4. **Timing Risk**: Use FOK orders to avoid partial fills
+4. **Timing Risk**: Use FOK/FAK orders to control partial fills
+5. **Liquidity Risk**: Require depth-aware VWAP before execution
+6. **Resolution Risk**: Validate NegRisk grouping and market rules
 
 ---
 

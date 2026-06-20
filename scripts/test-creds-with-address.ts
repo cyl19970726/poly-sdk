@@ -15,10 +15,10 @@
  * 测试流程：
  * 1. 读取保存的 credentials（包含 wallet address）
  * 2. 创建 mock signer，getAddress() 返回保存的地址
- * 3. 直接使用 @polymarket/clob-client 测试 L2 操作
+ * 3. 直接使用 @polymarket/clob-client-v2 测试 L2 操作
  */
 
-import { ClobClient } from '@polymarket/clob-client';
+import { ClobClient } from '@polymarket/clob-client-v2';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
@@ -73,16 +73,16 @@ async function testWithMockSigner(creds: StoredCredentials): Promise<void> {
 
   try {
     // @ts-ignore - ClobClient 期望 Wallet 类型，但我们传入 mock signer
-    const client = new ClobClient(
-      CLOB_HOST,
-      POLYGON_CHAIN_ID,
-      mockSigner as any,
-      {
+    const client = new ClobClient({
+      host: CLOB_HOST,
+      chain: POLYGON_CHAIN_ID as any,
+      signer: mockSigner as any,
+      creds: {
         key: creds.key,
         secret: creds.secret,
         passphrase: creds.passphrase,
-      }
-    );
+      },
+    });
 
     console.log('✅ CLOB Client 创建成功');
 
@@ -134,7 +134,11 @@ async function testL1Operations(creds: StoredCredentials): Promise<void> {
 
   try {
     // @ts-ignore
-    const client = new ClobClient(CLOB_HOST, POLYGON_CHAIN_ID, mockSigner as any);
+    const client = new ClobClient({
+      host: CLOB_HOST,
+      chain: POLYGON_CHAIN_ID as any,
+      signer: mockSigner as any,
+    });
 
     // 测试 deriveApiKey - 这是 L1 操作，需要 EIP-712 签名
     console.log('📝 测试 L1: deriveApiKey (需要 EIP-712 签名)...');

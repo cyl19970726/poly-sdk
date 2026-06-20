@@ -23,10 +23,28 @@ import {
   WS_ENDPOINTS,
 } from '../realtime/index.js';
 import type { PriceUpdate, BookUpdate, Orderbook, OrderbookLevel } from '../core/types.js';
+import { createModuleLogger } from '../core/logger.js';
+
+const log = createModuleLogger('realtime-v2');
+
+function normalizeUserOrderEventType(value: unknown): 'PLACEMENT' | 'UPDATE' | 'CANCELLATION' {
+  const text = String(value ?? '').toUpperCase();
+  if (text === 'PLACEMENT' || text === 'PLACE') return 'PLACEMENT';
+  if (text === 'CANCELLATION' || text === 'CANCEL' || text === 'CANCELLED') return 'CANCELLATION';
+  return 'UPDATE';
+}
 
 // ============================================================================
 // Types
 // ============================================================================
+
+/** Optional logger interface for structured logging */
+export interface ILogger {
+  debug(msg: string, data?: unknown): void;
+  info(msg: string, data?: unknown): void;
+  warn(msg: string, data?: unknown): void;
+  error(msg: string, data?: unknown): void;
+}
 
 export interface RealtimeServiceConfig {
   /** Auto-reconnect on disconnect (default: true) */
@@ -35,6 +53,8 @@ export interface RealtimeServiceConfig {
   pingInterval?: number;
   /** Enable debug logging (default: false) */
   debug?: boolean;
+  /** Optional structured logger (fallback to console.log if not provided) */
+  logger?: ILogger;
 }
 
 // Market data types
@@ -69,7 +89,13 @@ export interface LastTradeInfo {
 
 export interface PriceChange {
   assetId: string;
-  changes: Array<{ price: string; size: string }>;
+  changes: Array<{
+    price: string;
+    size: string;
+    side?: string;
+    bestBid?: string;
+    bestAsk?: string;
+  }>;
   timestamp: number;
 }
 
@@ -248,9 +274,9 @@ export class RealtimeServiceV2 extends EventEmitter {
   private cryptoClient: RealTimeDataClient | null = null;
   private config: RealtimeServiceConfig;
 
-  // Store crypto subscriptions for reconnect replay
-  private cryptoBinanceSymbols: Set<string> = new Set();
-  private cryptoChainlinkSymbols: Set<string> = new Set();
+  // Store crypto subscriptions for reconnect replay (reference-counted)
+  private cryptoBinanceSymbols: Map<string, number> = new Map();
+  private cryptoChainlinkSymbols: Map<string, number> = new Map();
   private subscriptions: Map<string, Subscription> = new Map();
   private subscriptionIdCounter = 0;
   private connected = false;
@@ -283,6 +309,22 @@ export class RealtimeServiceV2 extends EventEmitter {
   // Timer to batch market subscription updates
   private marketSubscriptionBatchTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // ----- Subscribe-ACK observability (2026-05-06, L13 lesson) ---------------
+  // Polymarket WS does NOT send an explicit subscribe ACK frame. The only
+  // signal that a subscription "took" is the arrival of a `book` / `price_change`
+  // / `last_trade_price` / `best_bid_ask` event for that asset_id. When the
+  // server silently drops a subscribe (e.g. OB never arrives for short-duration
+  // 5m / 15m crypto markets), we used to have NO log layer to detect it.
+  //
+  // We now track per-tokenId "sent timestamp" and confirm ack on first inbound
+  // event. After 60s of silence we emit a CRITICAL warning so the miss is
+  // visible in logs instead of silently swallowed.
+  /** assetId -> sub-sent timestamp (ms) for tokens awaiting first inbound event */
+  private pendingSubAck: Map<string, number> = new Map();
+  /** Timer to fire CRITICAL warning when any pendingSubAck exceeds 60s */
+  private subAckWarnTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly SUB_ACK_TIMEOUT_MS = 60_000;
+
   // Caches
   private priceCache: Map<string, PriceUpdate> = new Map();
   private bookCache: Map<string, OrderbookSnapshot> = new Map();
@@ -294,6 +336,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       autoReconnect: config.autoReconnect ?? true,
       pingInterval: config.pingInterval ?? 5000,
       debug: config.debug ?? false,
+      logger: config.logger,
     };
   }
 
@@ -325,7 +368,14 @@ export class RealtimeServiceV2 extends EventEmitter {
       cryptoConnectResolve = resolve;
     });
 
-    // Main client for MARKET/USER channels
+    // Main client for MARKET/USER channels.
+    //
+    // Propagate the host-injected logger down to child RealTimeDataClient so
+    // WS-layer diagnostics (`Pong timeout - connection dead`,
+    // `Status changed: DISCONNECTED`, `Handling dead connection`, …) land in
+    // the host's logger instead of the no-op SDK module logger. (Fix-E for
+    // task-fix-market-data-ws-subscribe — without this propagation, hosts that
+    // injected `logger:` into RealtimeServiceV2 still lost child WS events.)
     this.client = new RealTimeDataClient({
       onConnect: this.handleConnect.bind(this),
       onMessage: this.handleMessage.bind(this),
@@ -333,6 +383,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       autoReconnect: this.config.autoReconnect,
       pingInterval: this.config.pingInterval,
       debug: this.config.debug,
+      logger: this.config.logger,
     });
 
     // User client for USER channel (clob_user events)
@@ -350,6 +401,7 @@ export class RealtimeServiceV2 extends EventEmitter {
       autoReconnect: this.config.autoReconnect,
       pingInterval: this.config.pingInterval,
       debug: this.config.debug,
+      logger: this.config.logger,
     });
 
     // Crypto client for LIVE_DATA channel (crypto_prices)
@@ -365,8 +417,9 @@ export class RealtimeServiceV2 extends EventEmitter {
         this.cryptoConnected = status === ConnectionStatus.CONNECTED;
       },
       autoReconnect: this.config.autoReconnect,
-      pingInterval: this.config.pingInterval,
+      pingInterval: 5_000, // Polymarket RTDS requires 5s PING interval (https://docs.polymarket.com/market-data/websocket/rtds)
       debug: this.config.debug,
+      logger: this.config.logger,
     });
 
     this.client.connect();
@@ -414,6 +467,31 @@ export class RealtimeServiceV2 extends EventEmitter {
   }
 
   /**
+   * Force reconnect the crypto (LIVE_DATA) channel WebSocket.
+   * Terminates the current connection and triggers auto-reconnect,
+   * which will re-subscribe to all Binance + Chainlink symbols via handleCryptoConnect().
+   *
+   * Use when individual symbol subscriptions stop receiving data
+   * but the TCP connection appears alive (ping/pong still works).
+   * This is the known "subscription-level silent drop" failure mode
+   * of the Polymarket LIVE_DATA WebSocket.
+   */
+  forceReconnectCrypto(): void {
+    if (this.cryptoClient) {
+      this.log('Force reconnecting crypto (LIVE_DATA) channel...');
+      this.cryptoClient.forceReconnect();
+    }
+  }
+
+  /**
+   * Get crypto client connection status.
+   * Returns false if the crypto client is disconnected, reconnecting, or null.
+   */
+  isCryptoConnected(): boolean {
+    return this.cryptoConnected && this.cryptoClient !== null;
+  }
+
+  /**
    * Disconnect from WebSocket server
    */
   disconnect(): void {
@@ -445,6 +523,11 @@ export class RealtimeServiceV2 extends EventEmitter {
     this.cryptoBinanceSymbols.clear();
     this.cryptoChainlinkSymbols.clear();
     this.userCredentials = null;
+    this.pendingSubAck.clear();
+    if (this.subAckWarnTimer) {
+      clearTimeout(this.subAckWarnTimer);
+      this.subAckWarnTimer = null;
+    }
   }
 
   private cancelMarketSubscriptionBatch(): void {
@@ -539,6 +622,20 @@ export class RealtimeServiceV2 extends EventEmitter {
         // Remove these token IDs from accumulated set
         for (const tokenId of tokenIds) {
           this.accumulatedMarketTokenIds.delete(tokenId);
+          // Stop awaiting ack for tokens we're explicitly unsubscribing.
+          this.pendingSubAck.delete(tokenId);
+        }
+
+        // H0 fix (2026-05-03): explicit UNSUBSCRIBE to server
+        // Polymarket WS is stateful add/remove (verified via docs.polymarket.com).
+        // Without this call, server accumulates subscriptions → capacity exhausted →
+        // silent drop. Caused 38.5% crypto / 81% cs2 / 1.4% weather miss rate.
+        if (this.client && this.connected && tokenIds.length > 0) {
+          try {
+            this.client.unsubscribeMarket(tokenIds);
+          } catch (err) {
+            this.log(`unsubscribeMarket failed (non-fatal): ${err}`);
+          }
         }
 
         // Re-subscribe with remaining tokens (or send empty to clear)
@@ -597,6 +694,25 @@ export class RealtimeServiceV2 extends EventEmitter {
 
     const subMsg = { subscriptions };
     this.log(`Sending merged market subscription with ${allTokenIds.length} tokens`);
+
+    // L13 lesson (2026-05-06): track per-token sub-sent timestamp so we can
+    // (a) measure ack latency on first inbound event and
+    // (b) raise CRITICAL warning if NO event ever arrives (silent server drop).
+    const sentAt = Date.now();
+    for (const tokenId of allTokenIds) {
+      // Only record if we don't already have an ack pending for this token.
+      // (Refresh / reconnect re-sends keep the original sentAt to avoid masking
+      // a true silent-drop; if a token previously confirmed and we re-send, we
+      // start a fresh observation window.)
+      if (!this.pendingSubAck.has(tokenId)) {
+        this.pendingSubAck.set(tokenId, sentAt);
+      }
+    }
+    this.logAlways('info',
+      `WS sub sent {topic: clob_market, tokenCount: ${allTokenIds.length}, ` +
+      `sample: [${allTokenIds.slice(0, 3).map(t => t.slice(-8)).join(',')}]}`);
+    this.scheduleSubAckTimeoutCheck();
+
     this.client.subscribe(subMsg);
 
     // Store for reconnection (use a fixed key for the merged subscription)
@@ -605,6 +721,76 @@ export class RealtimeServiceV2 extends EventEmitter {
 
     // Schedule refresh to ensure we receive updates (not just snapshot)
     this.scheduleSubscriptionRefresh('__merged_market__');
+  }
+
+  /**
+   * Record first inbound market event for a tokenId — confirms WS sub ack.
+   * Logs latency once, then removes the token from pendingSubAck so subsequent
+   * events are silent.
+   */
+  private observeMarketAck(assetId: string): void {
+    if (!assetId) return;
+    const sentAt = this.pendingSubAck.get(assetId);
+    if (sentAt === undefined) return;
+    const latencyMs = Date.now() - sentAt;
+    this.pendingSubAck.delete(assetId);
+    this.logAlways('info',
+      `WS sub ack confirmed {tokenId: ${assetId.slice(-12)}, latency_ms: ${latencyMs}}`);
+  }
+
+  /**
+   * Schedule a one-shot check 60s after the most recent sub-send. If any
+   * tokenId is still in pendingSubAck and was sent ≥60s ago, emit CRITICAL.
+   * Reschedules itself if there are still un-acked pending tokens with newer
+   * send timestamps.
+   */
+  private scheduleSubAckTimeoutCheck(): void {
+    if (this.subAckWarnTimer) return; // already scheduled — coalesce
+    this.subAckWarnTimer = setTimeout(() => {
+      this.subAckWarnTimer = null;
+      const now = Date.now();
+      const stale: Array<{ tokenId: string; ageMs: number }> = [];
+      for (const [tokenId, sentAt] of this.pendingSubAck.entries()) {
+        const ageMs = now - sentAt;
+        if (ageMs >= RealtimeServiceV2.SUB_ACK_TIMEOUT_MS) {
+          stale.push({ tokenId, ageMs });
+        }
+      }
+      if (stale.length > 0) {
+        const sample = stale.slice(0, 5)
+          .map(s => `${s.tokenId.slice(-8)}@${s.ageMs}ms`).join(',');
+        this.logAlways('error',
+          `CRITICAL: WS sub appears to have NO ACK ` +
+          `{unacked_tokens: ${stale.length}/${this.pendingSubAck.size}, ` +
+          `sample: [${sample}]}`);
+      }
+      // If there are still un-acked pending tokens (newer than 60s ago),
+      // reschedule so we re-evaluate when they age out.
+      if (this.pendingSubAck.size > 0) {
+        this.scheduleSubAckTimeoutCheck();
+      }
+    }, RealtimeServiceV2.SUB_ACK_TIMEOUT_MS);
+  }
+
+  /**
+   * Log unconditionally (bypasses this.config.debug gate).
+   * Used for observability events that must always be visible: subscribe-sent,
+   * subscribe-ack-confirmed, subscribe-ack-timeout-CRITICAL.
+   */
+  private logAlways(level: 'info' | 'error', message: string): void {
+    const prefixed = `[RealtimeService] ${message}`;
+    if (this.config.logger) {
+      if (level === 'error') {
+        // Fall back to warn if no error level (interface defines error)
+        this.config.logger.error(prefixed);
+      } else {
+        this.config.logger.info(prefixed);
+      }
+    } else if (level === 'error') {
+      log.error(prefixed);
+    } else {
+      log.info(prefixed);
+    }
   }
 
   /**
@@ -788,12 +974,16 @@ export class RealtimeServiceV2 extends EventEmitter {
   subscribeCryptoPrices(symbols: string[], handlers: CryptoPriceHandlers = {}): Subscription {
     const subId = `crypto_${++this.subscriptionIdCounter}`;
 
-    // Store symbols for reconnect replay
-    for (const s of symbols) this.cryptoBinanceSymbols.add(s);
+    // Reference-counted subscribe: only send WebSocket subscribe for NEW symbols
+    const newSymbols: string[] = [];
+    for (const s of symbols) {
+      const count = this.cryptoBinanceSymbols.get(s) ?? 0;
+      if (count === 0) newSymbols.push(s);
+      this.cryptoBinanceSymbols.set(s, count + 1);
+    }
 
-    // Use custom RealTimeDataClient method
-    if (this.cryptoClient) {
-      this.cryptoClient.subscribeCryptoPrices(symbols);
+    if (newSymbols.length > 0 && this.cryptoClient) {
+      this.cryptoClient.subscribeCryptoPrices(newSymbols);
     }
 
     const handler = (price: CryptoPrice) => {
@@ -809,9 +999,19 @@ export class RealtimeServiceV2 extends EventEmitter {
       type: 'update',
       unsubscribe: () => {
         this.off('cryptoPrice', handler);
-        for (const s of symbols) this.cryptoBinanceSymbols.delete(s);
-        if (this.cryptoClient) {
-          this.cryptoClient.unsubscribeCryptoPrices(symbols);
+        const symbolsToUnsub: string[] = [];
+        for (const s of symbols) {
+          const count = this.cryptoBinanceSymbols.get(s) ?? 0;
+          const newCount = count - 1;
+          if (newCount <= 0) {
+            this.cryptoBinanceSymbols.delete(s);
+            symbolsToUnsub.push(s);
+          } else {
+            this.cryptoBinanceSymbols.set(s, newCount);
+          }
+        }
+        if (symbolsToUnsub.length > 0 && this.cryptoClient) {
+          this.cryptoClient.unsubscribeCryptoPrices(symbolsToUnsub);
         }
         this.subscriptions.delete(subId);
       },
@@ -832,12 +1032,16 @@ export class RealtimeServiceV2 extends EventEmitter {
   subscribeCryptoChainlinkPrices(symbols: string[], handlers: CryptoPriceHandlers = {}): Subscription {
     const subId = `crypto_chainlink_${++this.subscriptionIdCounter}`;
 
-    // Store symbols for reconnect replay
-    for (const s of symbols) this.cryptoChainlinkSymbols.add(s);
+    // Reference-counted subscribe: only send WebSocket subscribe for NEW symbols
+    const newSymbols: string[] = [];
+    for (const s of symbols) {
+      const count = this.cryptoChainlinkSymbols.get(s) ?? 0;
+      if (count === 0) newSymbols.push(s);
+      this.cryptoChainlinkSymbols.set(s, count + 1);
+    }
 
-    // Use custom RealTimeDataClient method
-    if (this.cryptoClient) {
-      this.cryptoClient.subscribeCryptoChainlinkPrices(symbols);
+    if (newSymbols.length > 0 && this.cryptoClient) {
+      this.cryptoClient.subscribeCryptoChainlinkPrices(newSymbols);
     }
 
     const handler = (price: CryptoPrice) => {
@@ -853,9 +1057,19 @@ export class RealtimeServiceV2 extends EventEmitter {
       type: 'update',
       unsubscribe: () => {
         this.off('cryptoChainlinkPrice', handler);
-        for (const s of symbols) this.cryptoChainlinkSymbols.delete(s);
-        if (this.cryptoClient) {
-          this.cryptoClient.unsubscribeCryptoChainlinkPrices(symbols);
+        const symbolsToUnsub: string[] = [];
+        for (const s of symbols) {
+          const count = this.cryptoChainlinkSymbols.get(s) ?? 0;
+          const newCount = count - 1;
+          if (newCount <= 0) {
+            this.cryptoChainlinkSymbols.delete(s);
+            symbolsToUnsub.push(s);
+          } else {
+            this.cryptoChainlinkSymbols.set(s, newCount);
+          }
+        }
+        if (symbolsToUnsub.length > 0 && this.cryptoClient) {
+          this.cryptoClient.unsubscribeCryptoChainlinkPrices(symbolsToUnsub);
         }
         this.subscriptions.delete(subId);
       },
@@ -1146,6 +1360,12 @@ export class RealtimeServiceV2 extends EventEmitter {
           this.subscriptionGenerations.set(subId, this.connectionGeneration);
         }
       }, 1000);
+    } else if (this.accumulatedMarketTokenIds.size > 0) {
+      // Race condition fix: if a disconnect cancelled the 100ms batch timer
+      // before sendMergedMarketSubscription() could run, the subscription was
+      // never stored in subscriptionMessages. Re-schedule it on reconnect.
+      this.log(`Re-scheduling merged market subscription (${this.accumulatedMarketTokenIds.size} tokens, not yet stored)...`);
+      this.scheduleMergedMarketSubscription();
     }
 
     this.emit('connected');
@@ -1205,10 +1425,10 @@ export class RealtimeServiceV2 extends EventEmitter {
       setTimeout(() => {
         if (!this.cryptoClient || !this.cryptoConnected) return;
         if (this.cryptoBinanceSymbols.size > 0) {
-          this.cryptoClient.subscribeCryptoPrices([...this.cryptoBinanceSymbols]);
+          this.cryptoClient.subscribeCryptoPrices([...this.cryptoBinanceSymbols.keys()]);
         }
         if (this.cryptoChainlinkSymbols.size > 0) {
-          this.cryptoClient.subscribeCryptoChainlinkPrices([...this.cryptoChainlinkSymbols]);
+          this.cryptoClient.subscribeCryptoChainlinkPrices([...this.cryptoChainlinkSymbols.keys()]);
         }
       }, 1000);
     }
@@ -1236,7 +1456,9 @@ export class RealtimeServiceV2 extends EventEmitter {
   }
 
   private handleMessage(_client: RealTimeDataClientInterface, message: Message): void {
-    this.log(`Received: ${message.topic}:${message.type}`);
+    // Use debug level for frequent price_change events, info for others
+    const level = message.type === 'price_change' ? 'debug' : 'info';
+    this.log(`Received: ${message.topic}:${message.type}`, level);
 
     const payload = message.payload as Record<string, unknown>;
 
@@ -1296,6 +1518,7 @@ export class RealtimeServiceV2 extends EventEmitter {
         for (const item of items) {
           const book = this.parseOrderbook(item as Record<string, unknown>, timestamp);
           if (book.assetId) {
+            this.observeMarketAck(book.assetId);
             this.bookCache.set(book.assetId, book);
             this.emit('orderbook', book);
           }
@@ -1308,6 +1531,7 @@ export class RealtimeServiceV2 extends EventEmitter {
         for (const item of items) {
           const change = this.parsePriceChange(item as Record<string, unknown>, timestamp);
           if (change.assetId) {
+            this.observeMarketAck(change.assetId);
             this.emit('priceChange', change);
           }
         }
@@ -1319,6 +1543,7 @@ export class RealtimeServiceV2 extends EventEmitter {
         for (const item of items) {
           const trade = this.parseLastTrade(item as Record<string, unknown>, timestamp);
           if (trade.assetId) {
+            this.observeMarketAck(trade.assetId);
             this.lastTradeCache.set(trade.assetId, trade);
             this.emit('lastTrade', trade);
           }
@@ -1345,6 +1570,9 @@ export class RealtimeServiceV2 extends EventEmitter {
           spread: Number(payload.spread) || 0,
           timestamp,
         };
+        if (bestPrices.assetId) {
+          this.observeMarketAck(bestPrices.assetId);
+        }
         this.emit('bestBidAsk', bestPrices);
         break;
       }
@@ -1391,14 +1619,14 @@ export class RealtimeServiceV2 extends EventEmitter {
     if (type === 'order') {
       // order event: Order placed (PLACEMENT), updated (UPDATE), or cancelled (CANCELLATION)
       const order: UserOrder = {
-        orderId: payload.order_id as string || '',
+        orderId: payload.order_id as string || payload.id as string || '',
         market: payload.market as string || '',
-        asset: payload.asset as string || '',
+        asset: payload.asset_id as string || payload.asset as string || '',
         side: payload.side as 'BUY' | 'SELL',
         price: Number(payload.price) || 0,
         originalSize: Number(payload.original_size) || 0,
         sizeMatched: Number(payload.size_matched) || 0,  // API field: size_matched
-        eventType: payload.event_type as 'PLACEMENT' | 'UPDATE' | 'CANCELLATION',
+        eventType: normalizeUserOrderEventType(payload.event_type),
         timestamp,
       };
       this.emit('userOrder', order);
@@ -1562,9 +1790,18 @@ export class RealtimeServiceV2 extends EventEmitter {
   }
 
   private parsePriceChange(payload: Record<string, unknown>, timestamp: number): PriceChange {
-    const changes = payload.price_changes as Array<{ price: string; size: string }> || [];
+    const rawChanges = Array.isArray(payload.price_changes)
+      ? payload.price_changes as Array<Record<string, unknown>>
+      : ('price' in payload && 'size' in payload ? [payload] : []);
+    const changes = rawChanges.map((change) => ({
+      price: String(change.price ?? ''),
+      size: String(change.size ?? ''),
+      side: change.side !== undefined ? String(change.side) : undefined,
+      bestBid: change.best_bid !== undefined ? String(change.best_bid) : undefined,
+      bestAsk: change.best_ask !== undefined ? String(change.best_ask) : undefined,
+    }));
     return {
-      assetId: payload.asset_id as string || '',
+      assetId: payload.asset_id as string || rawChanges.find((c) => c.asset_id)?.asset_id as string || '',
       changes,
       timestamp,
     };
@@ -1656,9 +1893,21 @@ export class RealtimeServiceV2 extends EventEmitter {
     this.client.unsubscribe(msg);
   }
 
-  private log(message: string): void {
-    if (this.config.debug) {
-      console.log(`[RealtimeService] ${message}`);
+  /**
+   * Log with level support (debug/info)
+   * - price_change events: debug level (too frequent)
+   * - orderbook updates: info level
+   * - connection events: info level
+   */
+  private log(message: string, level: 'debug' | 'info' = 'info'): void {
+    if (!this.config.debug) return;
+
+    if (this.config.logger) {
+      // Use structured logger if provided
+      this.config.logger[level](message);
+    } else {
+      // Fallback to structured logger
+      log.info(`[RealtimeService] ${message}`);
     }
   }
 

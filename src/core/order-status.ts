@@ -5,8 +5,11 @@
  * Provides helper functions for status validation and state transitions.
  */
 
-import type { OpenOrder } from '@polymarket/clob-client';
+import type { OpenOrder } from '@polymarket/clob-client-v2';
 import { OrderStatus } from './types.js';
+import { createModuleLogger } from './logger.js';
+
+const log = createModuleLogger('order-status');
 
 /**
  * ============================================================================
@@ -15,6 +18,7 @@ import { OrderStatus } from './types.js';
  *
  * Polymarket CLOB API returns these statuses in OpenOrder.status:
  * - "live"      - Order active in orderbook
+ * - "unmatched" - Order accepted but not matched yet; equivalent to open for tracking
  * - "matched"   - Order has fills (partial or complete)
  * - "delayed"   - Order submitted but not yet active (rare)
  * - "cancelled" - Order cancelled
@@ -29,7 +33,11 @@ import { OrderStatus } from './types.js';
  * 2. "live" with size_matched > 0
  *    Decision: This shouldn't happen (API inconsistency), treat as partially_filled
  *
- * 3. Missing status field
+ * 3. "unmatched" with size_matched > 0
+ *    Decision: Treat by fill quantity. The exchange state is contradictory, but quantity
+ *    is the accounting source of truth for strategy/runtime state.
+ *
+ * 4. Missing status field
  *    Decision: Default to 'open' (most common case)
  */
 
@@ -57,10 +65,11 @@ export function mapApiStatusToInternal(apiOrder: OpenOrder): OrderStatus {
   const apiStatus = apiOrder.status?.toLowerCase() || 'live';
   const originalSize = Number(apiOrder.original_size) || 0;
   const sizeMatched = Number(apiOrder.size_matched) || 0;
+  const hasValidOriginalSize = originalSize > 0;
 
   // Handle "matched" status (could be partial or full)
   if (apiStatus === 'matched') {
-    if (sizeMatched >= originalSize) {
+    if (hasValidOriginalSize && sizeMatched >= originalSize) {
       return OrderStatus.FILLED;
     }
     if (sizeMatched > 0) {
@@ -74,7 +83,19 @@ export function mapApiStatusToInternal(apiOrder: OpenOrder): OrderStatus {
   if (apiStatus === 'live') {
     // Check for fills (shouldn't happen but handle it)
     if (sizeMatched > 0) {
-      return sizeMatched >= originalSize
+      return hasValidOriginalSize && sizeMatched >= originalSize
+        ? OrderStatus.FILLED
+        : OrderStatus.PARTIALLY_FILLED;
+    }
+    return OrderStatus.OPEN;
+  }
+
+  // Handle "unmatched" status. This is still an accepted exchange order from our
+  // runtime's perspective, not a rejection. It remains cancelable unless fills
+  // reported by quantity prove a partial/full match.
+  if (apiStatus === 'unmatched') {
+    if (sizeMatched > 0) {
+      return hasValidOriginalSize && sizeMatched >= originalSize
         ? OrderStatus.FILLED
         : OrderStatus.PARTIALLY_FILLED;
     }
@@ -96,7 +117,7 @@ export function mapApiStatusToInternal(apiOrder: OpenOrder): OrderStatus {
   }
 
   // Unknown status - log warning and default to open
-  console.warn(`[OrderStatus] Unknown API status: ${apiStatus}, defaulting to OPEN`);
+  log.warn(`Unknown API status: ${apiStatus}, defaulting to OPEN`);
   return OrderStatus.OPEN;
 }
 

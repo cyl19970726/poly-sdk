@@ -153,7 +153,7 @@ ctfManager.on('split_detected', async (event) => {
 
 // 监听 Merge 完成
 ctfManager.on('merge_detected', (event) => {
-  console.log(`Merge completed: ${event.amount} → USDC`);
+  console.log(`Merge completed: ${event.amount} → pUSD`);
   console.log(`Transaction: ${event.txHash}`);
 });
 ```

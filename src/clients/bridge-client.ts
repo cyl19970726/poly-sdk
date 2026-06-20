@@ -2,13 +2,13 @@
  * Bridge Client for Polymarket Cross-Chain Deposits
  *
  * Enables depositing assets from multiple chains (Ethereum, etc.)
- * and having them automatically converted to USDC.e on Polygon for trading.
+ * and having them routed toward the Polygon collateral flow used by Polymarket.
  *
  * Flow:
  * 1. Request deposit addresses for your Polymarket wallet
  * 2. Send assets to the unique deposit address for each chain/token
- * 3. Assets are automatically bridged and swapped to USDC.e on Polygon
- * 4. USDC.e is credited to your Polymarket account
+ * 3. Assets are automatically bridged/swapped on Polygon
+ * 4. The Polymarket account should hold pUSD before CLOB V2 trading
  *
  * @see https://docs.polymarket.com/developers/misc-endpoints/bridge-deposit
  * @see https://docs.polymarket.com/developers/misc-endpoints/bridge-supported-assets
@@ -114,7 +114,7 @@ export interface DepositTransaction {
   fromAmountBaseUnit: string;
   /** Destination chain ID (137 for Polygon) */
   toChainId: number;
-  /** Destination token address (USDC.e on Polygon) */
+  /** Destination token address reported by the Bridge API */
   toTokenAddress: string;
   /** Current status of the deposit */
   status: DepositStatusType;
@@ -153,7 +153,7 @@ export interface DepositStatus {
   status: 'pending' | 'bridging' | 'swapping' | 'completed' | 'failed';
   /** Destination transaction hash (when completed) */
   destinationTxHash?: string;
-  /** USDC.e amount received (when completed) */
+  /** Destination amount received (when completed) */
   usdceReceived?: string;
   /** Error message (if failed) */
   errorMessage?: string;
@@ -282,7 +282,7 @@ export class BridgeClient {
    * - A Bitcoin address for BTC deposits
    *
    * Funds sent to these addresses are automatically bridged to Polygon
-   * and converted to USDC.e for your Polymarket account.
+   * and routed into the Polygon collateral flow for your Polymarket account.
    *
    * @param walletAddress - Your Polymarket wallet address (EOA address)
    * @returns Universal deposit addresses for EVM, Solana, and Bitcoin
@@ -606,7 +606,7 @@ export class BridgeClient {
       `Wallet: ${walletAddress}`,
       '',
       'Send assets to these addresses to deposit to your Polymarket account:',
-      '(Assets will be automatically converted to USDC.e on Polygon)',
+      '(After deposit, confirm the Polymarket account has pUSD before V2 trading)',
       '',
     ];
 
@@ -731,7 +731,7 @@ export interface DepositOptions {
  * This function:
  * 1. Gets the deposit address for your wallet
  * 2. Transfers USDC to that address
- * 3. The bridge automatically converts it to USDC.e for your Polymarket account
+ * 3. The bridge routes the funds on Polygon; confirm pUSD before V2 trading
  *
  * @param signer - Ethers wallet/signer to send from
  * @param amount - Amount in USDC (e.g., 10.5 for $10.50)
@@ -1006,13 +1006,13 @@ export function getSupportedDepositTokens(): string[] {
 // ===== Utility Functions =====
 
 /**
- * Calculate the expected USDC.e output after bridge fees
+ * Calculate the expected destination stablecoin output after bridge fees
  *
  * Note: This is an estimate. Actual output depends on bridge/swap fees.
  *
  * @param amount - Input amount in source token
  * @param tokenSymbol - Source token symbol
- * @returns Estimated USDC.e output
+ * @returns Estimated stablecoin output
  */
 export function estimateBridgeOutput(amount: number, tokenSymbol: string): number {
   // Typical bridge fees: ~0.5-1%

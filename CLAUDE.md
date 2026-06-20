@@ -19,6 +19,41 @@
 4) **不要引入隐式 fallback**：SDK 的“数据源选择策略”必须显式（否则业务侧很难 debug）  
 5) **不要提交本地凭证/脚本**：`.test-creds.json`、`scripts/test-*` 等只用于本地调试
 
+## Logger injection contract（2026-05-08, Fix-B/C/D/E/F/G）
+
+> 任何 owns watchdog/timer 输出诊断 log 的 class —— 永远不允许「optional logger + 默认 no-op」。
+> 不变量：(1) 默认 logger 必须 fail-loud（console-backed，**非** silent no-op），
+> (2) 接受 `logger?` 的 ctor 必须把它 propagate 到所有 own 一个 watchdog 的 child。
+
+### 历史教训
+2026-03 至 2026-05 间，`market-data` worker 实例化 `RealtimeServiceV2({ debug })` 但**没注入** `logger`。
+`RealtimeServiceV2.scheduleSubAckTimeoutCheck()` 60s watchdog 触发的 `CRITICAL: WS sub appears to have NO ACK`
+log 进了 `_logger`（poly-sdk 默认是 silent no-op）—— 这条 log **从未出现**在 PM2 logs 中，
+30% 的 crypto 5m markets 静默丢数据持续了 ~60 天。详见 `task-fix-market-data-ws-subscribe`。
+
+### 不变量列表
+
+1. **默认 logger 必须 console-backed（Fix-F）**。`src/core/logger.ts:_logger` 默认指向
+   `defaultConsoleLogger`，**不是** no-op。`{debug,info,warn,error}` 路由到对应
+   `console.*`，前缀 `[poly-sdk]`。这样未来即使有人忘记调 `setLogger()` 或漏传
+   `logger:`，诊断 log 至少进了 stdout/stderr，不会全黑。
+2. **任何 service ctor 接受 `logger?: ILogger` 都必须**：
+   - 存到 `this.config.logger`
+   - 在每条 `log.warn / log.error` 处优先用 `this.config.logger ?? log`
+   - 如果有 child class own watchdog，也要把 logger 透传下去（Fix-E 经验）
+3. **TradingService / RealtimeServiceV2 等核心 service** 必须接受 `logger?`（已实现）。
+4. **CI gate**：`scripts/ci/check-logger-inject.sh diff` 在 PR diff 中扫
+   `new RealtimeServiceV2(...)` / `new TradingService(...)` —— 任何新增点漏 `logger:` 直接 fail。
+
+### 给新 service 作者的 checklist
+
+- [ ] config interface 加 `logger?: Logger`
+- [ ] constructor 存到 `this.config.logger`
+- [ ] 所有 `log.warn / log.error` 用 `this.config.logger ?? log`
+- [ ] 如果 ctor 内部 `new Other(...)` 有 watchdog，把 logger 透传
+- [ ] 写一个 unit test：mock logger, assert watchdog 触发时 logger 收到 message
+- [ ] CI: `scripts/ci/check-logger-inject.sh diff` 在 PR 中绿
+
 ## 本地验证（最小集合）
 
 - Build：`pnpm -C packages/poly-sdk build`

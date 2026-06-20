@@ -7,6 +7,9 @@ import { RateLimiter, ApiType } from '../core/rate-limiter.js';
 import type { UnifiedCache } from '../core/unified-cache.js';
 import { CACHE_TTL } from '../core/unified-cache.js';
 import { PolymarketError } from '../core/errors.js';
+import { createModuleLogger } from '../core/logger.js';
+
+const log = createModuleLogger('data-api');
 
 const DATA_API_BASE = 'https://data-api.polymarket.com';
 
@@ -78,6 +81,7 @@ export interface Activity {
   // Market metadata (from API)
   title?: string;
   slug?: string;
+  eventSlug?: string;  // Event-level slug (for multi-outcome market grouping)
 
   // Trader info (from API - returned as "name")
   name?: string;
@@ -449,6 +453,27 @@ export class DataApiClient {
   }
 
   /**
+   * Get position for a specific tokenId
+   *
+   * Encapsulates position lookup by asset. Use for clear/sell flows that need size by tokenId.
+   *
+   * @param address - Wallet address
+   * @param tokenId - ERC-1155 asset/token ID
+   * @param options - Optional limit for internal pagination (default 500)
+   * @returns Position if found, null otherwise
+   */
+  async getPositionByTokenId(
+    address: string,
+    tokenId: string,
+    options?: { limit?: number }
+  ): Promise<Position | null> {
+    const positions = await this.getPositions(address, {
+      limit: options?.limit ?? 500,
+    });
+    return positions.find((p) => p.asset === tokenId) ?? null;
+  }
+
+  /**
    * Get closed positions for a wallet address
    *
    * @param address - Wallet address
@@ -600,7 +625,7 @@ export class DataApiClient {
 
     // Warn if we hit the API offset limit
     if (offset >= API_OFFSET_LIMIT && all.length >= API_OFFSET_LIMIT) {
-      console.warn(
+      log.warn(
         `[DataApiClient] Hit API offset limit (${API_OFFSET_LIMIT}). ` +
           'Use time filtering (start/end params) to access older activity data.'
       );
@@ -1057,6 +1082,7 @@ export class DataApiClient {
         // Market metadata
         title: a.title !== undefined ? String(a.title) : undefined,
         slug: a.slug !== undefined ? String(a.slug) : undefined,
+        eventSlug: a.eventSlug !== undefined ? String(a.eventSlug) : undefined,
 
         // Trader info
         name: a.name !== undefined ? String(a.name) : undefined,

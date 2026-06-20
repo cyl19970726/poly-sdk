@@ -99,8 +99,8 @@ export interface DipArbServiceConfig {
   surgeThreshold?: number;
 
   /**
-   * 完成双腿后自动合并回 USDC
-   * YES + NO tokens → USDC
+   * 完成双腿后自动合并回 pUSD
+   * YES + NO tokens → pUSD
    * @default true
    */
   autoMerge?: boolean;
@@ -472,7 +472,7 @@ export interface DipArbScanOptions {
   /** 筛选底层资产 */
   coin?: DipArbUnderlying | 'all';
   /** 筛选时长 */
-  duration?: '5m' | '15m' | 'all';
+  duration?: '5m' | '15m' | '1h' | '4h' | 'all';
   /** 距离结束的最小分钟数 */
   minMinutesUntilEnd?: number;
   /** 距离结束的最大分钟数 */
@@ -541,7 +541,7 @@ export interface DipArbSettleResult {
   upBalance?: number;
   /** DOWN token 数量 */
   downBalance?: number;
-  /** 收到的金额 (USDC) */
+  /** 收到的金额 (pUSD) */
   amountReceived?: number;
   /** 交易哈希 */
   txHash?: string;

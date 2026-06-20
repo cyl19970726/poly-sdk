@@ -260,8 +260,7 @@ async function discoverMarket(sdk: PolymarketSDK): Promise<MarketInfo> {
     throw new Error(`CLOB market has no tokens: ${conditionId!}`);
   }
 
-  const upToken = clobData.tokens.find(t => t.outcome === 'Up') || clobData.tokens[0];
-  const downToken = clobData.tokens.find(t => t.outcome === 'Down') || clobData.tokens[1];
+  const [upToken, downToken] = clobData.tokens;
   // Use Gamma endDate (CLOB end_date_iso is unreliable for crypto short-term markets)
   const endDateMs = gammaEndDate ? new Date(gammaEndDate).getTime() : Date.now() + 15 * 60000;
   const minutesLeft = Math.round((endDateMs - Date.now()) / 60000);

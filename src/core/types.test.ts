@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { getBinaryTokens } from './types.js';
 import type {
   UnifiedMarket,
   MarketToken,
@@ -30,7 +31,7 @@ describe('Core Types', () => {
   });
 
   describe('UnifiedMarket', () => {
-    it('should have tokens as array', () => {
+    it('should preserve binary token order', () => {
       const market: UnifiedMarket = {
         conditionId: '0x123',
         slug: 'test-market',
@@ -52,14 +53,13 @@ describe('Core Types', () => {
       expect(Array.isArray(market.tokens)).toBe(true);
       expect(market.tokens.length).toBe(2);
 
-      // Should be able to find tokens by outcome
-      const yesToken = market.tokens.find(t => t.outcome === 'Yes');
-      const noToken = market.tokens.find(t => t.outcome === 'No');
+      const binary = getBinaryTokens(market.tokens);
 
-      expect(yesToken?.tokenId).toBe('yes-token');
-      expect(yesToken?.price).toBe(0.6);
-      expect(noToken?.tokenId).toBe('no-token');
-      expect(noToken?.price).toBe(0.4);
+      expect(binary).not.toBeNull();
+      expect(binary?.primary.tokenId).toBe('yes-token');
+      expect(binary?.primary.price).toBe(0.6);
+      expect(binary?.secondary.tokenId).toBe('no-token');
+      expect(binary?.secondary.price).toBe(0.4);
     });
 
     it('should support multi-outcome markets', () => {
@@ -87,6 +87,7 @@ describe('Core Types', () => {
         'Candidate B',
         'Candidate C',
       ]);
+      expect(getBinaryTokens(market.tokens)).toBeNull();
     });
   });
 

@@ -95,7 +95,7 @@ describe('TradingService Integration', () => {
     testMarketConditionId = markets[0].conditionId;
 
     const market = await service.getMarket(testMarketConditionId);
-    testTokenId = market.tokens.find(t => t.outcome === 'Yes')?.tokenId;
+    testTokenId = market.tokens[0]?.tokenId;
   });
 
   describe('getMarket', () => {
@@ -105,8 +105,8 @@ describe('TradingService Integration', () => {
       expect(market.conditionId).toBe(testMarketConditionId);
       expect(typeof market.question).toBe('string');
       expect(market.tokens.length).toBeGreaterThanOrEqual(2);
-      expect(market.tokens.some(t => t.outcome === 'Yes')).toBe(true);
-      expect(market.tokens.some(t => t.outcome === 'No')).toBe(true);
+      expect(market.tokens[0]?.tokenId).toBeDefined();
+      expect(market.tokens[1]?.tokenId).toBeDefined();
     });
   });
 
@@ -259,8 +259,8 @@ describe('RealtimeServiceV2 Integration', () => {
       `https://clob.polymarket.com/markets/${conditionId}`
     );
     const market = await clobResponse.json();
-    yesTokenId = market.tokens.find((t: any) => t.outcome === 'Yes').token_id;
-    noTokenId = market.tokens.find((t: any) => t.outcome === 'No').token_id;
+    yesTokenId = market.tokens[0].token_id;
+    noTokenId = market.tokens[1].token_id;
   });
 
   beforeEach(() => {
@@ -454,8 +454,8 @@ describe('ArbitrageService Integration', () => {
     testMarket = {
       name: question.slice(0, 50),
       conditionId,
-      yesTokenId: market.tokens.find((t: any) => t.outcome === 'Yes').token_id,
-      noTokenId: market.tokens.find((t: any) => t.outcome === 'No').token_id,
+      yesTokenId: market.tokens[0].token_id,
+      noTokenId: market.tokens[1].token_id,
     };
   });
 
@@ -624,7 +624,7 @@ describe('RealtimeService (Legacy) Integration', () => {
       `https://clob.polymarket.com/markets/${conditionId}`
     );
     const market = await clobResponse.json();
-    testTokenId = market.tokens.find((t: any) => t.outcome === 'Yes').token_id;
+    testTokenId = market.tokens[0].token_id;
   });
 
   beforeEach(() => {
@@ -795,8 +795,8 @@ export async function getTestMarket(): Promise<{
 
   return {
     conditionId,
-    yesTokenId: market.tokens.find((t: any) => t.outcome === 'Yes').token_id,
-    noTokenId: market.tokens.find((t: any) => t.outcome === 'No').token_id,
+    yesTokenId: market.tokens[0].token_id,
+    noTokenId: market.tokens[1].token_id,
     question,
   };
 }

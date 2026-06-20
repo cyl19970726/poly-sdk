@@ -20,7 +20,7 @@ describe('RealtimeServiceV2 Integration', () => {
   beforeAll(async () => {
     // Find a liquid market for testing
     const response = await fetch(
-      'https://gamma-api.polymarket.com/markets?active=true&limit=1&order=volume24hr&ascending=false'
+      'https://gamma-api.polymarket.com/markets?active=true&limit=20&order=volume24hr&ascending=false'
     );
     const markets = await response.json() as Array<{ conditionId: string; question: string; clobTokenIds: string[] }>;
 
@@ -28,24 +28,23 @@ describe('RealtimeServiceV2 Integration', () => {
       throw new Error('No active markets found for testing');
     }
 
-    testConditionId = markets[0].conditionId;
-    console.log(`Using test market: "${markets[0].question.slice(0, 50)}..."`);
+    for (const candidate of markets) {
+      const clobResponse = await fetch(`https://clob.polymarket.com/markets/${candidate.conditionId}`);
+      const clobMarket = await clobResponse.json() as { tokens: Array<{ token_id: string; outcome: string }> };
+      if (clobMarket.tokens.length !== 2) {
+        continue;
+      }
 
-    // Get token IDs from CLOB API
-    const clobResponse = await fetch(`https://clob.polymarket.com/markets/${testConditionId}`);
-    const clobMarket = await clobResponse.json() as { tokens: Array<{ token_id: string; outcome: string }> };
-
-    const yesToken = clobMarket.tokens.find(t => t.outcome === 'Yes');
-    const noToken = clobMarket.tokens.find(t => t.outcome === 'No');
-
-    if (!yesToken || !noToken) {
-      throw new Error('Market does not have YES/NO tokens');
+      testConditionId = candidate.conditionId;
+      testYesTokenId = clobMarket.tokens[0].token_id;
+      testNoTokenId = clobMarket.tokens[1].token_id;
+      console.log(`Using test market: "${candidate.question.slice(0, 50)}..."`);
+      console.log(`YES token: ${testYesTokenId.slice(0, 20)}...`);
+      console.log(`NO token: ${testNoTokenId.slice(0, 20)}...`);
+      return;
     }
 
-    testYesTokenId = yesToken.token_id;
-    testNoTokenId = noToken.token_id;
-    console.log(`YES token: ${testYesTokenId.slice(0, 20)}...`);
-    console.log(`NO token: ${testNoTokenId.slice(0, 20)}...`);
+    throw new Error('No binary active markets found for testing');
   }, 60000);
 
   afterEach(async () => {

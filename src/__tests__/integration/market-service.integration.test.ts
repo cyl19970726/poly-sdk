@@ -11,7 +11,6 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { MarketService } from '../../services/market-service.js';
 import { RateLimiter } from '../../core/rate-limiter.js';
 import { createUnifiedCache } from '../../core/unified-cache.js';
-import type { MarketToken } from '../../services/market-service.js';
 
 describe('MarketService Integration', () => {
   let service: MarketService;
@@ -30,7 +29,7 @@ describe('MarketService Integration', () => {
 
     // Find a liquid market for testing
     const response = await fetch(
-      'https://gamma-api.polymarket.com/markets?active=true&limit=1&order=volume24hr&ascending=false'
+      'https://gamma-api.polymarket.com/markets?active=true&limit=20&order=volume24hr&ascending=false'
     );
     const markets = (await response.json()) as Array<{
       conditionId: string;
@@ -41,23 +40,20 @@ describe('MarketService Integration', () => {
       throw new Error('No active markets found for testing');
     }
 
-    testConditionId = markets[0].conditionId;
-    console.log(`Using test market: "${markets[0].question.slice(0, 50)}..."`);
+    for (const candidate of markets) {
+      const market = await service.getClobMarket(candidate.conditionId);
+      if (!market || market.tokens.length !== 2) {
+        continue;
+      }
 
-    // Get token IDs
-    const market = await service.getClobMarket(testConditionId);
-    if (!market) {
-      throw new Error(`Market not found: ${testConditionId}`);
-    }
-    const yesToken = market.tokens.find((t: MarketToken) => t.outcome === 'Yes');
-    const noToken = market.tokens.find((t: MarketToken) => t.outcome === 'No');
-
-    if (!yesToken || !noToken) {
-      throw new Error('Market does not have YES/NO tokens');
+      testConditionId = candidate.conditionId;
+      testYesTokenId = market.tokens[0].tokenId;
+      testNoTokenId = market.tokens[1].tokenId;
+      console.log(`Using test market: "${candidate.question.slice(0, 50)}..."`);
+      return;
     }
 
-    testYesTokenId = yesToken.tokenId;
-    testNoTokenId = noToken.tokenId;
+    throw new Error('No binary active markets found for testing');
   }, 60000);
 
   describe('getClobMarket', () => {
@@ -73,13 +69,11 @@ describe('MarketService Integration', () => {
       expect(typeof market.question).toBe('string');
       expect(market.question.length).toBeGreaterThan(0);
       expect(Array.isArray(market.tokens)).toBe(true);
-      expect(market.tokens.length).toBeGreaterThanOrEqual(2);
+      expect(market.tokens.length).toBe(2);
 
       // Verify tokens
-      const yesToken = market.tokens.find((t: MarketToken) => t.outcome === 'Yes');
-      const noToken = market.tokens.find((t: MarketToken) => t.outcome === 'No');
-      expect(yesToken).toBeDefined();
-      expect(noToken).toBeDefined();
+      expect(market.tokens[0]?.tokenId).toBeDefined();
+      expect(market.tokens[1]?.tokenId).toBeDefined();
 
       console.log(`✓ getClobMarket: "${market.question.slice(0, 40)}..."`);
     }, 30000);

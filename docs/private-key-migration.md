@@ -9,7 +9,7 @@
 
 ```typescript
 // ❌ 不安全的旧方式
-const PRIVATE_KEY = process.env.PRIVATE_KEY || '0xa1c847feeb03315d72a09481edae8e34d3892ae281b6b2291911380490a23459';
+const PRIVATE_KEY = process.env.PRIVATE_KEY || '0xYOUR_PRIVATE_KEY_HERE';
 ```
 
 这种做法存在严重安全隐患：
@@ -43,7 +43,7 @@ if (!PRIVATE_KEY) {
 # Polymarket SDK Test Configuration
 
 # Private key for testing (DO NOT commit real private key)
-PRIVATE_KEY=0xa1c847feeb03315d72a09481edae8e34d3892ae281b6b2291911380490a23459
+PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
 
 # Optional: Market configuration for tests
 # MARKET_CONDITION_ID=0x...
@@ -56,7 +56,7 @@ PRIVATE_KEY=0xa1c847feeb03315d72a09481edae8e34d3892ae281b6b2291911380490a23459
 # Polymarket SDK Test Configuration
 
 # Private key for testing
-PRIVATE_KEY=0xa1c847feeb03315d72a09481edae8e34d3892ae281b6b2291911380490a23459
+PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
 
 # Optional: Market configuration for tests
 # MARKET_CONDITION_ID=0x4e605132e536d51c37a28cdc0ac77e48c77d8e2251743d4eae3309165dee7d34
@@ -105,7 +105,7 @@ PRIVATE_KEY=0xa1c847feeb03315d72a09481edae8e34d3892ae281b6b2291911380490a23459
 
 ```bash
 # 搜索所有脚本中是否还有硬编码私钥
-grep -r "0xa1c847feeb03315d72a09481edae8e34d3892ae281b6b2291911380490a23459" scripts/ | grep -v ".env"
+grep -r "0xYOUR_PRIVATE_KEY_HERE" scripts/ | grep -v ".env"
 # 输出: ✓ No hardcoded private keys found in scripts
 ```
 

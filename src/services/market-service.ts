@@ -15,8 +15,9 @@ import {
   Chain,
   PriceHistoryInterval,
   type OrderBookSummary,
-} from '@polymarket/clob-client';
+} from '@polymarket/clob-client-v2';
 import { Wallet } from 'ethers';
+import { isActiveBuilderCode, readBuilderCodeOptional } from '../constants/builder-config.js';
 import { DataApiClient, Trade } from '../clients/data-api.js';
 import { GammaApiClient, GammaMarket } from '../clients/gamma-api.js';
 import type { UnifiedCache } from '../core/unified-cache.js';
@@ -44,12 +45,46 @@ import type {
   DualPriceLineData,
 } from '../core/types.js';
 import type { BinanceService, BinanceInterval } from './binance-service.js';
+import {
+  estimateBinaryArbitrageFees,
+  type LiquidityRole,
+} from '../utils/price-utils.js';
 
 // CLOB Host
 const CLOB_HOST = 'https://clob.polymarket.com';
 
 // Chain IDs
 export const POLYGON_MAINNET = 137;
+
+export interface MarketFeeConfig {
+  rate: number;
+  exponent: number;
+  takerOnly: boolean;
+  /** Builder maker fee in bps; zero unless a nonzero builder code is configured. */
+  builderMakerFeeBps: number;
+  /** Builder taker fee in bps; zero unless a nonzero builder code is configured. */
+  builderTakerFeeBps: number;
+}
+
+export interface FeeAwareOrderbookOptions {
+  /** Position size in complete sets/shares used for fee estimates. Defaults to 1. */
+  size?: number;
+  /** Expected execution role for the CLOB legs. Defaults to taker. */
+  liquidityRole?: LiquidityRole;
+}
+
+export interface FeeAwareArbitrageOpportunity extends ArbitrageOpportunity {
+  /** Gross profit before estimated CLOB fees. */
+  grossProfit: number;
+  /** Estimated platform + builder fees for the configured size. */
+  totalFees: number;
+  /** Net profit after estimated fees. Equal to `profit`. */
+  netProfit: number;
+  /** Net profit per complete set/share. */
+  netProfitPerShare: number;
+  /** Size used for fee estimation. */
+  size: number;
+}
 
 /**
  * Normalize timestamp to milliseconds.
@@ -104,6 +139,8 @@ export interface MarketServiceConfig {
   privateKey?: string;
   /** Chain ID (default: Polygon mainnet 137) */
   chainId?: number;
+  /** Optional V2 builder code; builder bps apply only when this is nonzero. */
+  builderCode?: string;
 }
 
 // Internal type for CLOB market data
@@ -207,15 +244,34 @@ export class MarketService {
 
   private async ensureInitialized(): Promise<ClobClient> {
     if (!this.initialized || !this.clobClient) {
-      const chainId = (this.config?.chainId || POLYGON_MAINNET) as Chain;
+      const chain = (this.config?.chainId || POLYGON_MAINNET) as Chain;
+
+      // V2 SDK uses an options-bag constructor; `chain` replaces `chainId`.
+      // MarketService is read-only — no order signing — so `builderConfig`
+      // is optional. We still propagate `POLY_BUILDER_CODE` if set so a
+      // single SDK can be passed through to signing paths without redoing
+      // setup, but never *require* it here.
+      const builderCode = this.config?.builderCode !== undefined
+        ? this.config.builderCode
+        : readBuilderCodeOptional();
+      const builderConfig = builderCode ? { builderCode } : undefined;
 
       if (this.config?.privateKey) {
         // Authenticated client
         const wallet = new Wallet(this.config.privateKey);
-        this.clobClient = new ClobClient(CLOB_HOST, chainId, wallet);
+        this.clobClient = new ClobClient({
+          host: CLOB_HOST,
+          chain,
+          signer: wallet,
+          builderConfig,
+        });
       } else {
         // Read-only client (no auth needed for market data)
-        this.clobClient = new ClobClient(CLOB_HOST, chainId);
+        this.clobClient = new ClobClient({
+          host: CLOB_HOST,
+          chain,
+          builderConfig,
+        });
       }
       this.initialized = true;
     }
@@ -255,20 +311,21 @@ export class MarketService {
    * Resolve market tokens from CLOB API
    *
    * This method fetches the actual token IDs from the CLOB API,
-   * which are different from the calculated positionIds in standard CTF.
+   * which should be treated as the authoritative asset IDs for SDK workflows.
    *
    * ## Why This Method Exists
    *
-   * Polymarket CLOB markets use custom ERC-1155 token IDs that are different
-   * from the standard CTF calculated positionIds:
+   * Current Polymarket docs use tokenId, assetId, and CTF positionId for the
+   * ERC-1155 outcome token ID. The safest engineering path is still to read
+   * IDs from Gamma/CLOB market metadata instead of recalculating them locally:
    *
    * ```
-   * Standard CTF:  positionId = keccak256(USDC + keccak256(0x0 + conditionId + indexSet))
-   * Polymarket:    tokenId = custom value from CLOB API (e.g., "25064375110792...")
+   * YES/primary token:   market.tokens[0].tokenId
+   * NO/secondary token:  market.tokens[1].tokenId
    * ```
    *
-   * This method provides the actual tokenIds needed for CTF operations
-   * (split, merge, redeem) on Polymarket markets.
+   * Hand-calculation is easy to get wrong when collateral, oracle, question ID,
+   * condition ID, index set, or V1/V2 context are mismatched.
    *
    * ## Usage with CTFClient
    *
@@ -292,7 +349,7 @@ export class MarketService {
   async resolveMarketTokens(conditionId: string): Promise<ResolvedMarketTokens | null> {
     try {
       const market = await this.getClobMarket(conditionId);
-      if (!market?.tokens?.length || market.tokens.length < 2) {
+      if (!market?.tokens?.length || market.tokens.length !== 2) {
         return null;
       }
 
@@ -412,6 +469,13 @@ export class MarketService {
     if (!market) {
       throw new PolymarketError(ErrorCode.MARKET_NOT_FOUND, `Market not found: ${conditionId}`);
     }
+    if (market.tokens.length !== 2) {
+      throw new PolymarketError(
+        ErrorCode.INVALID_RESPONSE,
+        `Market ${conditionId} is not binary (found ${market.tokens.length} outcomes)`
+      );
+    }
+
     // Use index-based access instead of name-based (supports Yes/No, Up/Down, Team1/Team2, etc.)
     const yesToken = market.tokens[0];  // primary outcome
     const noToken = market.tokens[1];   // secondary outcome
@@ -426,6 +490,112 @@ export class MarketService {
     ]);
 
     return this.processOrderbooks(yesBook, noBook, yesToken.tokenId, noToken.tokenId);
+  }
+
+  /**
+   * Get market-level platform/builder fee parameters from CLOB market info.
+   */
+  async getMarketFeeConfig(conditionId: string): Promise<MarketFeeConfig> {
+    const cacheKey = `clob:market-fees:${conditionId}`;
+    return this.cache.getOrSet(cacheKey, CACHE_TTL.MARKET_INFO, async () => {
+      const client = await this.ensureInitialized();
+      return this.rateLimiter.execute(ApiType.CLOB_API, async () => {
+        const rawClient = client as unknown as {
+          getClobMarketInfo?: (conditionId: string) => Promise<{
+            fd?: { r?: number; e?: number; to?: boolean };
+            mbf?: number;
+            tbf?: number;
+          }>;
+        };
+
+        if (!rawClient.getClobMarketInfo) {
+          throw new PolymarketError(ErrorCode.INVALID_RESPONSE, 'CLOB client does not expose getClobMarketInfo');
+        }
+
+        const info = await rawClient.getClobMarketInfo(conditionId);
+        const builderCode = this.config?.builderCode !== undefined
+          ? this.config.builderCode
+          : readBuilderCodeOptional();
+        const applyBuilderFees = isActiveBuilderCode(builderCode);
+        return {
+          rate: Number(info.fd?.r ?? 0),
+          exponent: Number(info.fd?.e ?? 1),
+          takerOnly: info.fd?.to ?? true,
+          builderMakerFeeBps: applyBuilderFees ? Number(info.mbf ?? 0) : 0,
+          builderTakerFeeBps: applyBuilderFees ? Number(info.tbf ?? 0) : 0,
+        };
+      });
+    });
+  }
+
+  /**
+   * Get processed orderbook analytics with fee-adjusted net arbitrage fields.
+   *
+   * Existing `getProcessedOrderbook()` remains gross-only for compatibility.
+   * Use this method before execution or alerting where net profitability matters.
+   */
+  async getFeeAwareProcessedOrderbook(
+    conditionId: string,
+    options: FeeAwareOrderbookOptions = {}
+  ): Promise<ProcessedOrderbook> {
+    const orderbook = await this.getProcessedOrderbook(conditionId);
+    const fees = await this.getMarketFeeConfig(conditionId);
+    const size = options.size ?? 1;
+    const liquidityRole = options.liquidityRole ?? 'taker';
+    const effective = orderbook.summary.effectivePrices;
+
+    const long = estimateBinaryArbitrageFees({
+      type: 'long',
+      size,
+      yesPrice: effective.effectiveBuyYes,
+      noPrice: effective.effectiveBuyNo,
+      liquidityRole,
+      rate: fees.rate,
+      exponent: fees.exponent,
+      takerOnly: fees.takerOnly,
+      makerBps: fees.builderMakerFeeBps,
+      takerBps: fees.builderTakerFeeBps,
+    });
+    const short = estimateBinaryArbitrageFees({
+      type: 'short',
+      size,
+      yesPrice: effective.effectiveSellYes,
+      noPrice: effective.effectiveSellNo,
+      liquidityRole,
+      rate: fees.rate,
+      exponent: fees.exponent,
+      takerOnly: fees.takerOnly,
+      makerBps: fees.builderMakerFeeBps,
+      takerBps: fees.builderTakerFeeBps,
+    });
+
+    return {
+      ...orderbook,
+      summary: {
+        ...orderbook.summary,
+        feeAdjusted: {
+          size,
+          liquidityRole,
+          feeRate: fees.rate,
+          feeExponent: fees.exponent,
+          takerOnly: fees.takerOnly,
+          builderMakerFeeBps: fees.builderMakerFeeBps,
+          builderTakerFeeBps: fees.builderTakerFeeBps,
+          long: {
+            grossProfit: long.grossProfit,
+            totalFees: long.totalFees,
+            netProfit: long.netProfit,
+            netProfitPerShare: long.netProfitPerShare,
+          },
+          short: {
+            grossProfit: short.grossProfit,
+            totalFees: short.totalFees,
+            netProfit: short.netProfit,
+            netProfitPerShare: short.netProfitPerShare,
+          },
+        },
+      },
+    };
   }
 
   /**
@@ -1345,6 +1515,58 @@ export class MarketService {
     return null;
   }
 
+  /**
+   * Detect arbitrage using estimated net profit after market fees.
+   *
+   * `threshold` is denominated in pUSD for the configured `size`, not in
+   * per-share profit. Use this method for execution/alerts; keep
+   * `detectArbitrage()` for cheap gross-price screening.
+   */
+  async detectArbitrageNet(
+    conditionId: string,
+    options: FeeAwareOrderbookOptions & { threshold?: number } = {}
+  ): Promise<FeeAwareArbitrageOpportunity | null> {
+    const size = options.size ?? 1;
+    const threshold = options.threshold ?? 0.005;
+    const orderbook = await this.getFeeAwareProcessedOrderbook(conditionId, {
+      size,
+      liquidityRole: options.liquidityRole,
+    });
+    const effectivePrices = orderbook.summary.effectivePrices;
+    const fees = orderbook.summary.feeAdjusted;
+    if (!fees) return null;
+
+    if (fees.long.netProfit > threshold) {
+      return {
+        type: 'long',
+        profit: fees.long.netProfit,
+        expectedProfit: fees.long.netProfit,
+        grossProfit: fees.long.grossProfit,
+        totalFees: fees.long.totalFees,
+        netProfit: fees.long.netProfit,
+        netProfitPerShare: fees.long.netProfitPerShare,
+        size,
+        action: `Buy YES @ ${effectivePrices.effectiveBuyYes.toFixed(4)} + NO @ ${effectivePrices.effectiveBuyNo.toFixed(4)}, estimated net ${fees.long.netProfit.toFixed(5)} pUSD after fees`,
+      };
+    }
+
+    if (fees.short.netProfit > threshold) {
+      return {
+        type: 'short',
+        profit: fees.short.netProfit,
+        expectedProfit: fees.short.netProfit,
+        grossProfit: fees.short.grossProfit,
+        totalFees: fees.short.totalFees,
+        netProfit: fees.short.netProfit,
+        netProfitPerShare: fees.short.netProfitPerShare,
+        size,
+        action: `Split $${size.toFixed(2)}, sell YES @ ${effectivePrices.effectiveSellYes.toFixed(4)} + NO @ ${effectivePrices.effectiveSellNo.toFixed(4)}, estimated net ${fees.short.netProfit.toFixed(5)} pUSD after fees`,
+      };
+    }
+
+    return null;
+  }
+
   // ===== Market Discovery =====
 
   /**
@@ -1436,7 +1658,7 @@ export class MarketService {
     maxMinutesUntilEnd?: number;
     limit?: number;
     sortBy?: 'endDate' | 'volume' | 'liquidity';
-    duration?: '5m' | '15m' | 'all';
+    duration?: '5m' | '15m' | '1h' | '4h' | 'all';
     coin?: 'BTC' | 'ETH' | 'SOL' | 'XRP' | 'all';
   }): Promise<GammaMarket[]> {
     if (!this.gammaApi) {
@@ -1454,28 +1676,75 @@ export class MarketService {
 
     // Duration to interval seconds mapping
     const durationIntervals: Record<string, number> = {
-      '5m': 300,   // 5 minutes in seconds
-      '15m': 900,  // 15 minutes in seconds
+      '5m': 300,    // 5 minutes in seconds
+      '15m': 900,   // 15 minutes in seconds
+      '1h': 3600,   // 1 hour in seconds
+      '4h': 14400,  // 4 hours in seconds
     };
+
+    // Coin short → full name mapping (for 1h slug format)
+    const coinFullNames: Record<string, string> = {
+      btc: 'bitcoin',
+      eth: 'ethereum',
+      sol: 'solana',
+      xrp: 'xrp',
+    };
+
+    // Month names for 1h slug format
+    const monthNames = [
+      'january', 'february', 'march', 'april', 'may', 'june',
+      'july', 'august', 'september', 'october', 'november', 'december',
+    ];
 
     // Supported coins
     const allCoins = ['btc', 'eth', 'sol', 'xrp'] as const;
     const targetCoins = coin === 'all' ? allCoins : [coin.toLowerCase()];
 
     // Target durations
-    const targetDurations = duration === 'all' ? ['5m', '15m'] : [duration];
+    const targetDurations = duration === 'all' ? ['5m', '15m', '1h', '4h'] : [duration];
 
     // Calculate time slots to fetch
     const nowSeconds = Math.floor(Date.now() / 1000);
     const minEndSeconds = nowSeconds + minMinutesUntilEnd * 60;
     const maxEndSeconds = nowSeconds + maxMinutesUntilEnd * 60;
 
+    /**
+     * Generate 1h slug in ET (Eastern Time) format.
+     * Pattern: {coinName}-up-or-down-{month}-{day}-{year}-{hour}{ampm}-et
+     * Example: bitcoin-up-or-down-march-15-2026-9am-et
+     */
+    const generate1hSlug = (coinShort: string, slotStartSeconds: number): string => {
+      const fullName = coinFullNames[coinShort] ?? coinShort;
+      const date = new Date(slotStartSeconds * 1000);
+
+      // Convert to ET using Intl.DateTimeFormat
+      const etParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        hour12: true,
+      }).formatToParts(date);
+
+      const getPart = (type: string) => etParts.find((p) => p.type === type)?.value ?? '';
+      const month = parseInt(getPart('month'), 10);
+      const day = parseInt(getPart('day'), 10);
+      const year = getPart('year');
+      const hour = parseInt(getPart('hour'), 10);
+      const dayPeriod = getPart('dayPeriod').toLowerCase(); // am/pm
+
+      const monthName = monthNames[month - 1];
+      const hourStr = `${hour}${dayPeriod}`;
+
+      return `${fullName}-up-or-down-${monthName}-${day}-${year}-${hourStr}-et`;
+    };
+
     // Generate slugs for all combinations
     const slugsToFetch: string[] = [];
 
     for (const dur of targetDurations) {
       const intervalSeconds = durationIntervals[dur];
-      const durationStr = dur.replace('m', 'm'); // 5m or 15m
 
       // Calculate the current slot and extend to cover the time range
       // The slug timestamp is the START time, endTime = startTime + interval
@@ -1490,7 +1759,13 @@ export class MarketService {
       // Generate slots from minSlotStart to maxSlotStart
       for (let slotStart = minSlotStart; slotStart <= maxSlotStart; slotStart += intervalSeconds) {
         for (const coinName of targetCoins) {
-          slugsToFetch.push(`${coinName}-updown-${durationStr}-${slotStart}`);
+          if (dur === '1h') {
+            // 1h uses human-readable slug: {coinName}-up-or-down-{month}-{day}-{year}-{hour}{ampm}-et
+            slugsToFetch.push(generate1hSlug(coinName, slotStart));
+          } else {
+            // 5m, 15m, 4h use timestamp slug: {coin}-updown-{duration}-{timestamp}
+            slugsToFetch.push(`${coinName}-updown-${dur}-${slotStart}`);
+          }
         }
       }
     }

@@ -215,10 +215,9 @@ async function findActiveMarket(marketService: MarketService): Promise<{
   // For each market, check both sides and pick the cheaper one (within budget)
   for (const candidate of activeMarkets) {
     const marketInfo = await marketService.getClobMarket(candidate.conditionId!);
-    if (!marketInfo?.tokens || marketInfo.tokens.length < 2) continue;
+    if (!marketInfo?.tokens || marketInfo.tokens.length !== 2) continue;
 
-    const primary = marketInfo.tokens.find((t: any) => t.outcome === 'Yes') || marketInfo.tokens[0];
-    const secondary = marketInfo.tokens.find((t: any) => t.outcome === 'No') || marketInfo.tokens[1];
+    const [primary, secondary] = marketInfo.tokens;
 
     // Check both sides
     const [yesPrices, noPrices] = await Promise.all([

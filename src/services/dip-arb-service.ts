@@ -72,6 +72,9 @@ import {
   parseDurationFromSlug,
   isDipArbLeg1Signal,
 } from './dip-arb-types.js';
+import { createModuleLogger } from '../core/logger.js';
+
+const log = createModuleLogger('dip-arb');
 
 // ===== DipArbService =====
 
@@ -349,12 +352,12 @@ export class DipArbService extends EventEmitter {
     // Subscribe to Chainlink prices for the underlying asset
     // Format: ETH -> ETH/USD
     const chainlinkSymbol = `${market.underlying}/USD`;
-    console.log(`[DipArb] Subscribing to Chainlink prices: ${chainlinkSymbol}`);
+    log.info(`[DipArb] Subscribing to Chainlink prices: ${chainlinkSymbol}`);
     this.chainlinkSubscription = this.realtimeService.subscribeCryptoChainlinkPrices(
       [chainlinkSymbol],
       {
         onPrice: (price: CryptoPrice) => {
-          console.log(`[DipArb] Chainlink price received: ${price.symbol} = $${price.price}`);
+          log.info(`[DipArb] Chainlink price received: ${price.symbol} = $${price.price}`);
           this.handleChainlinkPriceUpdate(price);
         },
       }
@@ -407,7 +410,7 @@ export class DipArbService extends EventEmitter {
           );
 
           if (result.success) {
-            this.log(`✅ Startup merge successful: ${pairsToMerge.toFixed(2)} pairs → $${result.usdcReceived || pairsToMerge.toFixed(2)} USDC.e`);
+            this.log(`✅ Startup merge successful: ${pairsToMerge.toFixed(2)} pairs → $${result.usdcReceived || pairsToMerge.toFixed(2)} pUSD`);
             this.log(`   TxHash: ${result.txHash?.slice(0, 20)}...`);
           } else {
             this.log(`❌ Startup merge failed`);
@@ -801,7 +804,7 @@ export class DipArbService extends EventEmitter {
   }
 
   /**
-   * Merge UP + DOWN tokens to USDC.e
+   * Merge UP + DOWN tokens to pUSD
    *
    * Uses mergeByTokenIds with Polymarket token IDs for correct CLOB market handling.
    * This locks in profit immediately after Leg2 completes.
@@ -843,7 +846,7 @@ export class DipArbService extends EventEmitter {
         noTokenId: this.market.downTokenId,
       };
 
-      this.log(`🔄 Merging ${shares.toFixed(1)} UP + DOWN → USDC.e...`);
+      this.log(`🔄 Merging ${shares.toFixed(1)} UP + DOWN → pUSD...`);
 
       const result = await this.ctf.mergeByTokenIds(
         this.market.conditionId,
@@ -852,7 +855,7 @@ export class DipArbService extends EventEmitter {
       );
 
       if (result.success) {
-        this.log(`✅ Merge successful: ${shares.toFixed(1)} pairs → $${result.usdcReceived || shares.toFixed(2)} USDC.e`);
+        this.log(`✅ Merge successful: ${shares.toFixed(1)} pairs → $${result.usdcReceived || shares.toFixed(2)} pUSD`);
         this.log(`   TxHash: ${result.txHash?.slice(0, 20)}...`);
       }
 
@@ -995,7 +998,7 @@ export class DipArbService extends EventEmitter {
       if (new Date() >= this.market.endTime) {
         // Always log market end (not just in debug mode)
         if (!this.currentRound) {
-          console.log('[DipArb] Market has ended before round could start');
+          log.info('[DipArb] Market has ended before round could start');
         }
         return;
       }
@@ -2216,7 +2219,7 @@ export class DipArbService extends EventEmitter {
     if (this.config.logHandler) {
       this.config.logHandler(formatted);
     } else {
-      console.log(formatted);
+      log.info(formatted);
     }
   }
 }

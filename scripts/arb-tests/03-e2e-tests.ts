@@ -229,10 +229,13 @@ async function test3_FindActiveMarket() {
     for (const market of markets) {
       try {
         const clobMarket = await sdk.clobApi.getMarket(market.conditionId);
-        const yesToken = clobMarket.tokens.find(t => t.outcome === 'Yes');
-        const noToken = clobMarket.tokens.find(t => t.outcome === 'No');
+        if (clobMarket.tokens.length !== 2) {
+          continue;
+        }
 
-        if (yesToken && noToken && clobMarket.active && clobMarket.acceptingOrders) {
+        const [yesToken, noToken] = clobMarket.tokens;
+
+        if (clobMarket.active && clobMarket.acceptingOrders) {
           selectedMarket = {
             market,
             yesTokenId: yesToken.tokenId,

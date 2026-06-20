@@ -18,29 +18,30 @@ export const WMATIC = '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270';
 /**
  * Supported tokens on Polygon
  *
- * ⚠️ IMPORTANT: USDC vs USDC.e for Polymarket CTF
+ * ⚠️ IMPORTANT: V2 Polymarket trading collateral
  *
- * | Token       | Address                                    | Polymarket CTF |
- * |-------------|--------------------------------------------|-----------------
- * | USDC_E      | 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 | ✅ Required    |
- * | USDC/NATIVE | 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 | ❌ Not accepted|
+ * | Token       | Address                                    | V2 role         |
+ * |-------------|--------------------------------------------|-----------------|
+ * | pUSD        | 0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB | Trading collateral |
+ * | USDC_E      | 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 | Onramp/offramp rail |
+ * | USDC/NATIVE | 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 | Deposit/bridge input |
  *
- * For Polymarket CTF operations (split/merge/redeem):
- * - Use transferUsdcE() to send USDC.e
- * - Use swap('USDC', 'USDC_E', amount) to convert native USDC to USDC.e
+ * For Polymarket V2 CTF operations (split/merge/redeem), the account needs
+ * pUSD. This swap service can still help acquire USDC.e, which must then be
+ * wrapped through the Polymarket Collateral Onramp.
  *
  * For general transfers:
  * - transferUsdc() sends native USDC (most DEXs, CEXs use this)
- * - transferUsdcE() sends bridged USDC.e (Polymarket CTF requires this)
+ * - transferUsdcE() sends bridged USDC.e (useful before wrapping to pUSD)
  */
 export const POLYGON_TOKENS = {
   // Native MATIC (use WMATIC address for swaps)
   MATIC: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
   WMATIC: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
-  // USDC variants - SEE ABOVE FOR POLYMARKET COMPATIBILITY
-  USDC: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',       // Native USDC - NOT for Polymarket CTF
+  // USDC variants - SEE ABOVE FOR POLYMARKET V2 FUND-FLOW ROLE
+  USDC: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',       // Native USDC - deposit/bridge input, not direct CTF collateral
   NATIVE_USDC: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // Alias for USDC
-  USDC_E: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',      // Bridged USDC.e - REQUIRED for Polymarket CTF
+  USDC_E: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',      // Bridged USDC.e - onramp/offramp rail
   // Other stables
   USDT: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
   DAI: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',
@@ -862,32 +863,25 @@ export class SwapService {
    *
    * ⚠️ WARNING: This transfers NATIVE USDC (0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359)
    *
-   * For Polymarket CTF operations, you need USDC.e instead.
-   * Use transferUsdcE() for Polymarket CTF compatibility.
+   * For Polymarket V2 trading, the account ultimately needs pUSD.
+   * Native USDC can be a deposit/bridge input, not direct CTF collateral.
    *
-   * @see transferUsdcE - For Polymarket CTF operations
+   * @see transferUsdcE - For USDC.e onramp/offramp flows before pUSD wrapping
    */
   async transferUsdc(to: string, amount: string): Promise<TransferResult> {
     return this.transfer('USDC', to, amount);
   }
 
   /**
-   * Transfer USDC.e (bridged USDC) to another address
+   * Transfer USDC.e (bridged USDC) to another address.
    *
-   * ✅ This is the correct method for Polymarket CTF operations.
-   *
-   * Polymarket's Conditional Token Framework (CTF) only accepts
-   * USDC.e (0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174).
-   *
-   * If you're funding a wallet for CTF trading, use this method.
+   * USDC.e is useful as an onramp/offramp rail. For CLOB V2 CTF operations,
+   * wrap it to pUSD before trading.
    *
    * @example
    * ```typescript
-   * // Fund a session wallet for Polymarket trading
+   * // Fund a session wallet's USDC.e rail, then wrap to pUSD before trading
    * await swapService.transferUsdcE(sessionWallet, '100');
-   *
-   * // The session wallet can now perform CTF operations
-   * await ctf.split(conditionId, '100');
    * ```
    */
   async transferUsdcE(to: string, amount: string): Promise<TransferResult> {

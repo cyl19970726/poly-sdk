@@ -125,7 +125,7 @@ poly-sdk 架构
 │  └────────────┘ └────────────┘ └────────────┘ └────────────┘ └────────────┘ │
 │                                                                               │
 │  使用官方 Polymarket 客户端:                                                   │
-│  • @polymarket/clob-client - 交易、订单簿、市场数据                            │
+│  • @polymarket/clob-client-v2 - 交易、订单簿、市场数据                         │
 │  • @polymarket/real-time-data-client - WebSocket 实时更新                     │
 │                                                                               │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -169,9 +169,13 @@ const sdk = new PolymarketSDK();
 
 // 通过 slug 或 condition ID 获取市场
 const market = await sdk.getMarket('will-trump-win-2024');
+const binary = getBinaryTokens(market.tokens);
+if (!binary) throw new Error('Expected binary market');
+const yesToken = binary.primary;
+const noToken = binary.secondary;
 console.log(`${market.question}`);
-console.log(`YES: ${market.tokens.find(t => t.outcome === 'Yes')?.price}`);
-console.log(`NO: ${market.tokens.find(t => t.outcome === 'No')?.price}`);
+console.log(`YES (${yesToken.outcome}): ${yesToken.price}`);
+console.log(`NO (${noToken.outcome}): ${noToken.price}`);
 
 // 获取处理后的订单簿（含分析数据）
 const orderbook = await sdk.getOrderbook(market.conditionId);
@@ -212,6 +216,28 @@ const openOrders = await sdk.tradingService.getOpenOrders();
 console.log(`未成交订单: ${openOrders.length}`);
 
 // 完成后清理
+sdk.stop();
+```
+
+### Email / Magic 登录（funder account）
+
+```typescript
+import { PolymarketSDK, getBinaryTokens } from '@catalyst-team/poly-sdk';
+
+const sdk = await PolymarketSDK.create({
+  privateKey: process.env.POLYMARKET_PRIVATE_KEY!, // 导出的 signer 私钥
+  signatureType: 1,                                // Magic / Email 登录
+  funderAddress: process.env.POLYMARKET_FUNDER!,   // Polymarket 页面显示的 profile address
+});
+
+const order = await sdk.tradingService.createLimitOrder({
+  tokenId: yesTokenId,
+  side: 'BUY',
+  price: 0.45,
+  size: 10,
+  orderType: 'GTC',
+});
+
 sdk.stop();
 ```
 
@@ -266,7 +292,7 @@ sdk.stop();  // 断开所有服务
 
 ### TradingService
 
-使用 `@polymarket/clob-client` 进行订单管理。
+使用 `@polymarket/clob-client-v2` 进行订单管理。
 
 ```typescript
 import { TradingService } from '@catalyst-team/poly-sdk';
@@ -303,7 +329,7 @@ const gtdOrder = await trading.createLimitOrder({
 const fokOrder = await trading.createMarketOrder({
   tokenId: yesTokenId,
   side: 'BUY',
-  amount: 10, // $10 USDC
+  amount: 10, // $10 pUSD notional
   orderType: 'FOK',
 });
 
@@ -378,10 +404,10 @@ const signals = await sdk.markets.detectMarketSignals(conditionId);
 买 YES @ P = 卖 NO @ (1-P)
 ```
 
-这意味着**同一订单会出现在两个订单簿中**。简单相加会导致重复计算：
+这意味着互补流动性可以通过另一侧 outcome 视图成交。简单相加可能重复计算可成交流动性：
 
 ```typescript
-// 错误: 重复计算镜像订单
+// 错误: 可能重复计算互补流动性
 const askSum = YES.ask + NO.ask;  // ~1.998, 而非 ~1.0
 
 // 正确: 使用有效价格
@@ -420,26 +446,28 @@ if (!status.ready) {
 
 // ===== CTF 操作 =====
 
-// Split: USDC -> YES + NO 代币
+// Split: pUSD -> YES + NO 代币
 const splitResult = await onchain.split(conditionId, '100');
 
-// Merge: YES + NO -> USDC（用于套利）
+// Merge: YES + NO -> pUSD（用于套利）
 const mergeResult = await onchain.mergeByTokenIds(conditionId, tokenIds, '100');
 
-// Redeem: 获胜代币 -> USDC（结算后）
+// Redeem: 获胜代币 -> pUSD（结算后）
 const redeemResult = await onchain.redeemByTokenIds(conditionId, tokenIds);
 
 // ===== DEX 交换 (QuickSwap V3) =====
 
-// 将 MATIC 交换为 USDC.e（CTF 需要）
+// 如需 onramp rail，可先将 MATIC 交换为 USDC.e，再 wrap 为 pUSD
 await onchain.swap('MATIC', 'USDC_E', '50');
 
 // 获取余额
 const balances = await onchain.getBalances();
+const pusdBalance = await onchain.getPusdBalance();
 console.log(`USDC.e: ${balances.usdcE}`);
+console.log(`pUSD: ${pusdBalance}`);
 ```
 
-**注意**: Polymarket CTF 需要 **USDC.e** (0x2791...)，不是原生 USDC。
+**注意**: 当前 CLOB V2 交易和 CTF 操作使用 **pUSD**。USDC.e 仍可作为 onramp/offramp 资产，但 V2 交易前应转换为 pUSD。
 
 ---
 
@@ -596,11 +624,11 @@ const arbService = new ArbitrageService({
   maxTradeSize: 100,       // 最大 $100
   autoExecute: true,       // 自动执行机会
 
-  // 再平衡器: 自动维持 USDC/代币比例
+  // 再平衡器: 自动维持 pUSD/代币比例
   enableRebalancer: true,
-  minUsdcRatio: 0.2,       // 最小 20% USDC
-  maxUsdcRatio: 0.8,       // 最大 80% USDC
-  targetUsdcRatio: 0.5,    // 再平衡目标
+  minUsdcRatio: 0.2,       // 最小 20% pUSD（保留旧选项名）
+  maxUsdcRatio: 0.8,       // 最大 80% pUSD（保留旧选项名）
+  targetUsdcRatio: 0.5,    // pUSD 再平衡目标
 
   // 执行安全
   sizeSafetyFactor: 0.8,   // 使用 80% 订单簿深度
@@ -684,8 +712,9 @@ const noPrice = market.tokens.no.price;
 **之后 (v0.3.0)**:
 ```typescript
 // MarketToken 对象数组
-const yesToken = market.tokens.find(t => t.outcome === 'Yes');
-const noToken = market.tokens.find(t => t.outcome === 'No');
+const binary = getBinaryTokens(market.tokens);
+const yesToken = binary?.primary;
+const noToken = binary?.secondary;
 
 const yesPrice = yesToken?.price;
 const noPrice = noToken?.price;
@@ -695,13 +724,13 @@ const noPrice = noToken?.price;
 
 ```typescript
 // 迁移辅助函数
-function getTokenPrice(market: UnifiedMarket, outcome: 'Yes' | 'No'): number {
-  return market.tokens.find(t => t.outcome === outcome)?.price ?? 0;
+function getTokenPrice(market: UnifiedMarket, side: 'yes' | 'no'): number {
+  return market.tokens[side === 'yes' ? 0 : 1]?.price ?? 0;
 }
 
 // 使用
-const yesPrice = getTokenPrice(market, 'Yes');
-const noPrice = getTokenPrice(market, 'No');
+const yesPrice = getTokenPrice(market, 'yes');
+const noPrice = getTokenPrice(market, 'no');
 ```
 
 **为什么改变？** 数组格式更好地支持多结果市场，并且与 Polymarket API 响应格式更一致。
@@ -804,7 +833,7 @@ import type {
 
 ## 依赖
 
-- `@polymarket/clob-client` - 官方 CLOB 交易客户端
+- `@polymarket/clob-client-v2` - 官方 CLOB 交易客户端
 - `@polymarket/real-time-data-client` - 官方 WebSocket 客户端
 - `ethers@5` - 区块链交互
 - `bottleneck` - 速率限制

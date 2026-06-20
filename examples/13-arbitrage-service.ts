@@ -101,8 +101,14 @@ async function main() {
   console.log('═══════════════════════════════════════════════════════════════\n');
 
   const scanResults = await arbService.scanMarkets(
-    { minVolume24h: 5000, limit: 50 },
-    0.003  // 0.3% min profit for scanning
+    {
+      minVolume24h: 5000,
+      limit: 50,
+      feeAware: true,
+      feeEstimateSize: 1,
+      liquidityRole: 'taker',
+    },
+    0.003  // 0.3% min net profit for scanning
   );
 
   const opportunities = scanResults.filter(r => r.arbType !== 'none');
@@ -114,7 +120,8 @@ async function main() {
     console.log('┌──────────────────────────────────────────────────────────────────┐');
     for (const r of opportunities.slice(0, 5)) {
       console.log(`│ ${r.market.name.slice(0, 50).padEnd(50)} │`);
-      console.log(`│   ${r.arbType.toUpperCase()} +${r.profitPercent.toFixed(2)}%  Size: ${r.availableSize.toFixed(0)}  Vol: $${r.volume24h.toLocaleString().padEnd(10)} │`);
+      console.log(`│   ${r.arbType.toUpperCase()} +${r.profitPercent.toFixed(2)}% net  Gross: ${((r.grossProfitRate ?? 0) * 100).toFixed(2)}%  Fees: ${(r.totalFees ?? 0).toFixed(5)} │`);
+      console.log(`│   Size: ${r.availableSize.toFixed(0)}  Vol: $${r.volume24h.toLocaleString().padEnd(10)} │`);
       console.log(`├──────────────────────────────────────────────────────────────────┤`);
     }
     console.log('└──────────────────────────────────────────────────────────────────┘');
@@ -138,7 +145,8 @@ async function main() {
 
   const best = opportunities[0];
   console.log(`Selected: ${best.market.name}`);
-  console.log(`Type: ${best.arbType.toUpperCase()}, Profit: +${best.profitPercent.toFixed(2)}%\n`);
+  console.log(`Type: ${best.arbType.toUpperCase()}, Net Profit: +${best.profitPercent.toFixed(2)}%`);
+  console.log(`Gross: ${((best.grossProfitRate ?? 0) * 100).toFixed(2)}%, Fees: ${(best.totalFees ?? 0).toFixed(5)} pUSD/${best.feeEstimateSize ?? 1}\n`);
 
   await arbService.start(best.market);
 

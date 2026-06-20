@@ -1,9 +1,18 @@
 # Polymarket 订单簿与套利机制详解
 
 > **Status**: Production Reference
-> **Last Updated**: 2024-12-07
+> **Last Updated**: 2026-06-20
 
 本文档详细解释 Polymarket 订单簿的工作原理，以及如何正确计算套利机会。
+
+核心结论：
+
+1. YES 和 NO 是同一事件的互补资产，不是两只独立股票。
+2. 普通二元市场里，最常见的 `YES.ask + NO.ask` / `YES.bid + NO.bid` 偏离通常只是 bid-ask spread，不是利润。
+3. 值得优先扫描的是严格 winner-take-all 的多结果 / NegRisk 事件。
+4. 任何可执行套利都必须按订单簿深度计算 VWAP，并用显式执行策略处理部分成交风险。
+5. `longArbProfit` / `shortArbProfit` 是 gross signal；实盘必须扣除 CLOB taker fee、builder fee、gas/relayer、滑点和失败风险。
+6. `postOnly: true` 只能用于 GTC/GTD maker 挂单；如果价格会立即成交，CLOB 会拒单，所以它不能替代 FOK/FAK 去吃当前 spread。
 
 ---
 
@@ -109,21 +118,25 @@ NO Token (tokenId: 0x456...)
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+上图是经济等价关系示例，不是 API 快照保证。生产代码不能假设每个订单在 YES/NO 两个 orderbook 中总是以完全镜像、同步、同排序、同去重方式出现。SDK 中可以用有效价格做 quote normalization，但执行前仍要按真实订单簿深度逐档计算，并避免把互补流动性重复计入可成交数量。
+
 ---
 
 ## 3. 套利机会分析
 
 ### 3.1 错误的计算方式
 
-之前我们错误地这样计算：
+常见错误是把 YES 和 NO 当作两只独立资产，直接相加：
 
 ```typescript
 // 错误！会导致重复计算
 const askSum = yesAsk + noAsk;   // 0.65 + 0.60 = 1.25
 const bidSum = yesBid + noBid;   // 0.40 + 0.35 = 0.75
 
-// 这些数字没有意义，因为同一订单被算了两次
+// 这些数字没有意义，因为互补流动性被重复计算
 ```
+
+如果看到 `YES.ask + NO.ask > 1` 或 `YES.bid + NO.bid < 1`，大多数情况下只是正常 spread 的反映。真正的套利判断必须先把直接交易和通过 split/merge 间接转换的路径都纳入同一套有效价格。
 
 ### 3.2 正确的计算方式
 
@@ -160,18 +173,34 @@ Long Arbitrage (买双边 + Merge):
   有效买 YES 成本 = min(YES.ask, 1 - NO.bid)
   有效买 NO 成本  = min(NO.ask, 1 - YES.bid)
   总成本 = 有效买 YES + 有效买 NO
-  利润 = 1 - 总成本
+  Gross 利润 = 1 - 总成本
 
-  当 总成本 < 1 时，存在套利机会
+  当 总成本 < 1 时，只能说明存在 gross 候选机会
 
 Short Arbitrage (Split + 卖双边):
   有效卖 YES 收入 = max(YES.bid, 1 - NO.ask)
   有效卖 NO 收入  = max(NO.bid, 1 - YES.ask)
   总收入 = 有效卖 YES + 有效卖 NO
-  利润 = 总收入 - 1
+  Gross 利润 = 总收入 - 1
 
-  当 总收入 > 1 时，存在套利机会
+  当 总收入 > 1 时，只能说明存在 gross 候选机会
 ```
+
+净利润还必须扣除：
+
+```text
+netProfit = grossProfit - platformFees - builderFees - gasOrRelayerCost - slippageBuffer - failureRiskBuffer
+```
+
+Polymarket CLOB V2 平台费由 market fee config 决定，常见形式是：
+
+```text
+platformFee = size * feeRate * price * (1 - price)
+```
+
+当前 SDK 的 `checkArbitrage()` / `longArbProfit` / `shortArbProfit` 保留为 gross 初筛。`ArbitrageService.scanMarkets()` 和启动后的 WebSocket `checkOpportunity()` 对二元市场默认走 fee-aware 路径，返回/触发的 `profitRate` / `profitPercent` 是扣除平台费和 builder fee 后的 net 值；如显式传 `feeAware: false`，才是 gross 初筛。生产执行请使用 `checkArbitrageWithFees()`、`MarketService.detectArbitrageNet()`、`TradingService.estimateBinaryArbitrageFees()` 或多腿场景的 `estimateMultiLegArbitrageFees()`。
+
+如果执行策略想保证 maker 身份，可以在限价单上设置 `postOnly: true`。这会让订单只挂簿不吃单；任何会 cross spread 的订单都会被 CLOB 拒绝。换句话说，post-only 适合做市/报价，不适合立即执行套利。立即执行路径仍应使用 FOK 或 FAK（IOC-style，能成交的部分成交，剩余取消）并按 taker fee 建模。
 
 ### 3.4 简化公式（利用镜像特性）
 
@@ -192,6 +221,40 @@ Short Arb 收入 = YES.bid + (1 - YES.ask) = 1 - YES.spread
 结论: 在正常市场中，spread > 0，所以没有套利机会
       只有当出现定价错误（spread < 0 或跨市场价格不一致）时才有套利
 ```
+
+### 3.5 普通二元市场中的直觉陷阱
+
+假设一个普通二元市场：
+
+```
+YES bid = 0.40
+YES ask = 0.65
+
+镜像后通常接近:
+NO ask = 1 - YES.bid = 0.60
+NO bid = 1 - YES.ask = 0.35
+```
+
+朴素相加会得到：
+
+```
+YES.ask + NO.ask = 0.65 + 0.60 = 1.25
+YES.bid + NO.bid = 0.40 + 0.35 = 0.75
+```
+
+这不是一个“偏离 1 的套利信号”，而是同一组 bid/ask spread 的两种展示方式：
+
+```
+Long Arb 成本 = YES.ask + (1 - YES.bid)
+              = 0.65 + 0.60
+              = 1.25 = 1 + spread
+
+Short Arb 收入 = YES.bid + (1 - YES.ask)
+                = 0.40 + 0.35
+                = 0.75 = 1 - spread
+```
+
+在普通二元市场里，spread 是成本。只有当有效买入成本低于 1，或有效卖出收入高于 1，并且扣除费用、滑点和失败风险后仍为正，才可能是可执行机会。
 
 ---
 
@@ -297,8 +360,8 @@ export function getEffectivePrices(
  */
 export function checkArbitrage(
   yesAsk: number,
-  yesBid: number,
   noAsk: number,
+  yesBid: number,
   noBid: number
 ): ArbitrageOpportunity | null {
   const effective = getEffectivePrices(yesAsk, yesBid, noAsk, noBid);
@@ -330,6 +393,53 @@ export function checkArbitrage(
   return null;
 }
 ```
+
+### 5.2 费用感知检测
+
+```typescript
+import {
+  checkArbitrageWithFees,
+  estimateBinaryArbitrageFees,
+} from '@catalyst-team/poly-sdk';
+
+const candidate = checkArbitrageWithFees(
+  yesAsk,
+  yesBid,
+  noAsk,
+  noBid,
+  {
+    size: 10,
+    rate: 0.03,
+    exponent: 1,
+    takerOnly: true,
+    liquidityRole: 'taker',
+  }
+);
+
+if (candidate && candidate.netProfit > 0.05) {
+  console.log(candidate.netProfit);
+}
+
+const long = estimateBinaryArbitrageFees({
+  type: 'long',
+  size: 10,
+  yesPrice: 0.49,
+  noPrice: 0.49,
+  rate: 0.03,
+});
+```
+
+如果从 conditionId 开始，优先让 service 从 CLOB market info 读取 fee 参数：
+
+```typescript
+const book = await markets.getFeeAwareProcessedOrderbook(conditionId, { size: 10 });
+const opportunity = await markets.detectArbitrageNet(conditionId, {
+  size: 10,
+  threshold: 0.05,
+});
+```
+
+实测风险提示：2026-06-20 的 1 pUSD 级 live smoke 中，6 股 France 2026 World Cup YES 以 `0.197` 买入、`0.196` 卖出，价差损失只有 `0.006` pUSD，但总成本约 `0.06283` pUSD，主要来自 CLOB taker fee。低价小 tick round trip 不能只看 spread。
 
 ---
 
@@ -375,19 +485,25 @@ export function checkArbitrage(
 
 ### 核心要点
 
-1. **镜像订单**: 每个订单同时出现在 YES 和 NO 订单簿中
+1. **互补流动性**: 买 YES @ P 与卖 NO @ (1-P) 在经济上等价，但 API 快照不应被假设为逐笔完全镜像
 2. **等价关系**: 买 YES @ P = 卖 NO @ (1-P)
 3. **有效价格**: 计算套利时要用 min/max 取最优价格
 4. **Spread = 成本**: 在正常市场中，spread 就是交易成本
-5. **市场效率**: 大多数时候不存在无风险套利
+5. **费用优先**: gross profit 不是净利润，CLOB taker fee 经常大于一两个 tick 的价差
+6. **市场效率**: 大多数时候不存在无风险套利
+7. **深度优先**: top-of-book 只能做初筛，真实利润要按目标规模走订单簿深度
+8. **NegRisk 要验证**: 只有同一事件、互斥且穷尽的 NegRisk 组才满足多结果求和逻辑
 
 ### 代码检查清单
 
 - [ ] 使用 `getEffectivePrices()` 而不是直接相加
-- [ ] Long Arb 利润 = 1 - (effectiveBuyYes + effectiveBuyNo)
-- [ ] Short Arb 利润 = (effectiveSellYes + effectiveSellNo) - 1
-- [ ] 考虑 Gas 成本对净利润的影响
-- [ ] 考虑滑点（使用 2-3 档深度计算）
+- [ ] Long Arb gross 利润 = 1 - (effectiveBuyYes + effectiveBuyNo)
+- [ ] Short Arb gross 利润 = (effectiveSellYes + effectiveSellNo) - 1
+- [ ] 使用 `getClobMarketInfo(conditionId)` / SDK fee-aware API 读取 `fd.r`、`fd.e`、`fd.to`、`mbf`、`tbf`
+- [ ] 净利润 = gross profit - platform fees - builder fees - gas/relayer - slippage/failure buffer
+- [ ] top-of-book 只用于发现候选机会，执行前必须按订单簿深度计算 VWAP
+- [ ] 多结果策略必须确认 `market.negRisk === true`，且所有市场属于同一事件和同一互斥结果空间
+- [ ] 执行路径必须显式使用 FOK/FAK (IOC-style)/批量下单、最小利润保护、最大滑点保护和失败处理
 
 ---
 
@@ -407,9 +523,9 @@ Polymarket 使用 **两种不同的 CTF (Conditional Token Framework) 合约**�
 │ 用途: 简单的二元市场 (Yes/No)                                        │
 │                                                                     │
 │ 操作:                                                               │
-│   - Split:  USDC → YES + NO token                                  │
-│   - Merge:  YES + NO → USDC                                        │
-│   - Redeem: Winning tokens → USDC (市场结算后)                      │
+│   - Split:  pUSD → YES + NO token                                  │
+│   - Merge:  YES + NO → pUSD                                        │
+│   - Redeem: Winning tokens → pUSD (市场结算后)                      │
 │                                                                     │
 │ 特点:                                                               │
 │   - 每个市场独立                                                     │
@@ -481,6 +597,18 @@ if (market.negRisk === true) {
 
 这是 Polymarket 最有价值的套利机会来源！
 
+不能仅因为页面看起来像“多候选人事件”就启用 `ΣYES ≈ 1` 逻辑。生产系统必须先确认：
+
+- 每个候选市场的 `negRisk === true`
+- 所有 markets 属于同一个 event / `negRiskMarketId`
+- 结果空间互斥且穷尽，包含清晰的 `Other` 或等价兜底项
+- resolution rules 一致，不存在多个结果可同时为真
+- 没有会破坏组合 payoff 的 void / cancellation / ambiguous settlement 条款
+
+只要这些条件不满足，`ΣYES ≈ 1` 的数学基础就不成立，扫描结果只能作为人工研究线索，不能作为自动交易信号。
+
+费用处理也必须逐腿完成：对同一 `negRiskMarketId` 下的每个候选 market 读取 `getClobMarketInfo(conditionId)`，把 `fd.r`、`fd.e`、`fd.to`、`mbf`、`tbf` 填入 `estimateMultiLegArbitrageFees()`。不要把二元市场的 `getFeeAwareProcessedOrderbook()` 直接套到整个多结果事件上。
+
 ### 9.1 多结果市场的套利原理
 
 ```
@@ -542,7 +670,7 @@ if (market.negRisk === true) {
 │   3. 总收入: $1080                                                  │
 │   4. 利润: $1080 - $1000 = $80 (8%)                                │
 │                                                                     │
-│ 风险: 几乎为零（只要市场正常结算）                                    │
+│ 风险: 低于方向性持仓，但依赖完整成交和正常结算                         │
 │ 成本: Gas fee (~$0.05) + 交易手续费                                  │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
@@ -627,6 +755,9 @@ async function scanMultiOutcomeArbitrage(eventId: string): Promise<ArbitrageOppo
   const event = await gammaApi.getEvent(eventId);
   const markets = event.markets;
 
+  // 注意：这是监控初筛示例，不是生产执行价格。
+  // 生产执行前必须用实时订单簿深度计算目标规模的 VWAP。
+
   // 计算所有 YES 价格总和
   let yesSum = 0;
   const marketPrices: Map<string, number> = new Map();
@@ -664,7 +795,56 @@ async function scanMultiOutcomeArbitrage(eventId: string): Promise<ArbitrageOppo
 }
 ```
 
-### 10.2 建议的监控策略
+上面的示例只适合发现候选事件。真实执行前需要把每个候选市场的 `outcomePrices` 替换为订单簿可成交价格，并对目标规模逐档撮合。
+
+### 10.2 可成交规模：不要只看 top-of-book
+
+top-of-book 只能回答“第一美元是否看起来有利润”，不能回答“目标规模是否能成交”。例如：
+
+```
+A YES ask = 0.30, size = 5
+A YES ask = 0.32, size = 1000
+A YES ask = 0.35, size = 2000
+```
+
+如果策略想买 1000 份，不能用 `0.30` 计算利润。必须逐档计算 VWAP：
+
+```
+VWAP = Σ(price_i * fillSize_i) / Σ(fillSize_i)
+```
+
+生产级扫描至少要输出：
+
+- 目标交易规模
+- 每个 leg 的可成交数量
+- 每个 leg 的 VWAP
+- 扣除费用和 gas 后的净利润
+- 最薄 leg 决定的最大安全规模
+
+### 10.3 执行原子性
+
+理论套利通常由多个订单组成。真实执行时，如果只成交一部分，风险会从“套利”变成裸露方向性仓位：
+
+- 买了 A/B/C 的 YES，但 D 没买到
+- 卖出了几个候选人的 YES，但剩余 leg 未成交
+- split/merge 或 NegRisk conversion 成功，但 CLOB leg 失败
+
+因此自动执行必须显式配置：
+
+- FOK 或 FAK (IOC-style) 订单类型
+- 批量下单或顺序下单的失败策略
+- `minProfitAfterFees`，成交后低于阈值立即停止
+- `maxSlippageBps`，任何 leg 超限即取消
+- 部分成交后的回滚 / 对冲 / 清仓逻辑
+- 如使用 `postOnly: true`，必须把它视作 maker 报价策略：可能不成交，不能作为立即吃 spread 的套利执行手段
+
+### 10.4 数据源和 fallback 必须显式
+
+套利检测不能在数据不完整时悄悄 fallback 到另一个来源。例如 WebSocket 订单簿过期、缺少某个 leg 深度、Gamma 事件 markets 不完整时，结果应标记为 `nonExecutable` 或直接跳过。
+
+SDK/策略层应把数据源选择暴露为显式参数，而不是在内部自动切换。否则业务侧很难判断机会是来自实时订单簿、缓存快照，还是 Gamma 的展示价格。
+
+### 10.5 建议的监控策略
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -718,13 +898,20 @@ async function scanMultiOutcomeArbitrage(eventId: string): Promise<ArbitrageOppo
    - 无法全部成交
    - 被更快的套利者抢先
 
-4. Gas 成本
+4. NegRisk 资格风险
+   - 候选项不完整或 Other 定义不清
+   - resolution rules 不一致
+   - 市场可能 void 或多个结果同时为真
+
+5. Gas 成本
    - 多次交易累积成本
    - 网络拥堵时成本飙升
 
 缓解措施:
    - 设置最小利润阈值 (>0.5%)
-   - 使用 FOK 订单避免部分成交
+   - 使用 FOK/FAK (IOC-style) 和批量执行控制部分成交
+   - 按订单簿深度计算 VWAP，不用单一 top-of-book 价格
+   - 对 NegRisk 组做 event、negRiskMarketId、互斥穷尽和规则一致性校验
    - 监控 Gas 价格，高峰期不操作
    - 从小额开始测试
 ```
@@ -741,14 +928,15 @@ Phase 1: 监控 (已完成)
 
 Phase 2: 通知 (进行中)
    □ 发现机会时发送通知
-   □ 利润/深度/风险评估
+   □ 利润/深度/VWAP/风险评估
 
 Phase 3: 半自动执行
    □ 一键执行套利
    □ 预设参数确认后执行
+   □ 部分成交后的回滚或清仓
 
 Phase 4: 全自动执行
    □ 自动检测 + 自动执行
-   □ 风控系统
+   □ FOK/FAK (IOC-style)/批量执行与风控系统
    □ 利润跟踪
 ```

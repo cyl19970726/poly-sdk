@@ -14,6 +14,9 @@ export { Cache, CACHE_TTL } from './core/cache.js';
 export { PolymarketError, ErrorCode, withRetry } from './core/errors.js';
 export * from './core/types.js';
 
+// Logger injection — call setLogger() once at app startup to route SDK logs
+export { setLogger, getLogger, type Logger } from './core/logger.js';
+
 // Order status utilities
 export {
   mapApiStatusToInternal,
@@ -110,7 +113,19 @@ export type {
 } from './services/wallet-service.js';
 
 export { MarketService, getIntervalMs as getIntervalMsService } from './services/market-service.js';
-export type { ResolvedMarketTokens } from './services/market-service.js';
+export type {
+  ResolvedMarketTokens,
+  MarketFeeConfig,
+  FeeAwareOrderbookOptions,
+  FeeAwareArbitrageOpportunity,
+} from './services/market-service.js';
+
+export { EventService } from './services/event-service.js';
+export type {
+  PolymarketEvent,
+  ListEventsParams,
+  EventTag,
+} from './services/event-service.js';
 
 // Real-time (V2 - using custom RealTimeDataClient)
 export { RealtimeServiceV2 } from './services/realtime-service-v2.js';
@@ -286,52 +301,24 @@ export type {
   ScanResult,
 } from './services/arbitrage-service.js';
 
-// SmartMoneyService - Smart Money detection and Copy Trading
-export {
-  SmartMoneyService,
-  categorizeMarket,
-  CATEGORY_KEYWORDS,
-} from './services/smart-money-service.js';
+// smart-money V2 — all exports from modular smart-money/ directory (clean break)
+
+// smart-money V2 modules (modularized, branch: copy-trading)
+export { PositionTracker, CopyEngine } from './smart-money/copy.js';
+export { TradeMonitor } from './smart-money/monitor.js';
+export { SmartMoneyCore } from './smart-money/core.js';
+export { WalletReports } from './smart-money/reports.js';
+export { categorizeMarket, CATEGORY_KEYWORDS } from './smart-money/constants.js';
 export type {
-  SmartMoneyWallet,
-  SmartMoneyTrade,
-  AutoCopyTradingOptions,
-  AutoCopyTradingStats,
-  AutoCopyTradingSubscription,
-  SmartMoneyServiceConfig,
-  // Leaderboard & Report types
-  LeaderboardOptions,
-  SmartMoneyLeaderboardEntry,
-  SmartMoneyLeaderboardResult,
-  PeriodRanking,
-  WalletReport,
-  WalletComparison,
-  // Report types (02-smart-money)
-  MarketCategory,
-  DailySummary,
-  CategoryStats,
-  TradeRecord,
-  PositionSummary,
-  ClosedMarketSummary,
+  PositionDiff,
+  OrderRequest,
+  TradeEvent,
+  MonitorOptions,
   DailyWalletReport,
-  DataRange,
-  PerformanceMetrics,
-  MarketStats,
-  TradingPatterns,
-  CurrentPositionsSummary,
   WalletLifecycleReport,
-  PieSlice,
-  PieChartData,
-  BarItem,
-  BarChartData,
-  MonthlyPnLItem,
-  MonthlyPnLData,
-  ChartMetadata,
   WalletChartData,
-  ReportProgressCallback,
-  LifecycleReportOptions,
   TextReport,
-} from './services/smart-money-service.js';
+} from './smart-money/types.js';
 
 // DipArbService - Dip Arbitrage for 15m/5m UP/DOWN markets
 export { DipArbService } from './services/dip-arb-service.js';
@@ -385,6 +372,16 @@ export type {
   ApiCredentials,
   LimitOrderParams,
   MarketOrderParams,
+  EstimateOrderFeesParams,
+  EstimateOrderFeesResult,
+  EstimateBinaryArbitrageFeesParams,
+  EstimateBinaryArbitrageFeesResult,
+  MarketFeeInfo,
+  PresignedOrder,
+  PresignedOrderFingerprint,
+  PresignOptions,
+  TradingServiceWalletIdentity,
+  ClearPositionParams,
   // Results
   Order,
   OrderResult,
@@ -452,20 +449,30 @@ export type {
 // TradingService provides all trading functionality with proper type exports
 
 // CTF (Conditional Token Framework)
-// NOTE: USDC_CONTRACT is USDC.e (bridged), required for Polymarket CTF
-// NATIVE_USDC_CONTRACT is native USDC, NOT compatible with CTF
+// NOTE: V2 trading collateral is pUSD. USDC_CONTRACT is retained as a
+// backwards-compatible pUSD alias; use PUSD_CONTRACT / COLLATERAL_CONTRACT in
+// new code. USDC_E_CONTRACT is the onramp/offramp rail.
+// NATIVE_USDC_CONTRACT is native USDC, a deposit/bridge input.
+// V1 exchange aliases (CTF_EXCHANGE / NEG_RISK_CTF_EXCHANGE) have been
+// removed at the V2-only cutover; consume CTF_EXCHANGE_V2 /
+// NEG_RISK_CTF_EXCHANGE_V2 or POLYGON_CONTRACTS_V2 directly.
 export {
   CTFClient,
   CTF_CONTRACT,
-  USDC_CONTRACT,           // USDC.e (0x2791...) - Required for CTF
-  NATIVE_USDC_CONTRACT,    // Native USDC (0x3c49...) - NOT for CTF
-  NEG_RISK_CTF_EXCHANGE,
+  PUSD_CONTRACT,
+  USDC_E_CONTRACT,
+  COLLATERAL_CONTRACT,
+  USDC_CONTRACT,           // Deprecated pUSD alias
+  NATIVE_USDC_CONTRACT,    // Native USDC (0x3c49...) - deposit/bridge input
+  NEG_RISK_CTF_EXCHANGE_V2,               // V2 canonical
   NEG_RISK_ADAPTER,
-  CTF_EXCHANGE,
+  CTF_EXCHANGE_V2,                        // V2 canonical
   USDC_DECIMALS,
   calculateConditionId,
   parseUsdc,
   formatUsdc,
+  parseCollateralAmount,
+  formatCollateralAmount,
 } from './clients/ctf-client.js';
 export type {
   CTFConfig,
@@ -479,6 +486,20 @@ export type {
   TokenIds,
 } from './clients/ctf-client.js';
 export { RevertReason } from './clients/ctf-client.js';
+
+// V2 contract SSOT — re-export so consumers can import the canonical V2
+// addresses (`POLYGON_CONTRACTS_V2.{ctfExchange,negRiskExchange,pUSD,...}`)
+// without reaching into the constants/ module path.
+export {
+  POLYGON_CONTRACTS_V2,
+  EIP_712,
+  POLYGON_CHAIN_ID,
+  POLYGON_AMOY_CHAIN_ID,
+} from './constants/v2-contracts.js';
+export type {
+  PolygonContractsV2,
+  Eip712Constants,
+} from './constants/v2-contracts.js';
 
 // Bridge (Cross-chain Deposits)
 export {
@@ -550,25 +571,49 @@ export {
   calculateBuyAmount,
   calculateSellPayout,
   calculateSharesForAmount,
+  calculatePlatformFee,
+  calculateBuilderFee,
+  estimateOrderFees,
+  estimateBinaryArbitrageFees,
+  estimateMultiLegArbitrageFees,
   calculateSpread,
   calculateMidpoint,
   formatPrice,
   formatUSDC,
   calculatePnL,
   checkArbitrage,
+  checkArbitrageWithFees,
   getEffectivePrices,
   ROUNDING_CONFIG,
 } from './utils/price-utils.js';
-export type { TickSize } from './utils/price-utils.js';
+export type {
+  TickSize,
+  LiquidityRole,
+  FeeSide,
+  FeeCurve,
+  BuilderFeeRates,
+  OrderFeeEstimateParams,
+  OrderFeeEstimate,
+  BinaryArbitrageFeeParams,
+  BinaryArbitrageFeeEstimate,
+  MultiLegArbitrageLegInput,
+  MultiLegArbitrageFeeParams,
+  MultiLegArbitrageLegEstimate,
+  MultiLegArbitrageFeeEstimate,
+  FeeAwareArbitrageResult,
+} from './utils/price-utils.js';
 
 // Calldata decoder (for mempool pending TX decoding — copy-trading)
 export {
   decodeMatchOrdersCalldata,
+  decodeMatchOrdersCalldataV1,
+  decodeMatchOrdersCalldataV2,
   isSettlementTx,
   extractTraderAddresses,
   CTF_ROUTER,
   NEG_RISK_ROUTER,
-  MATCH_ORDERS_SELECTOR,
+  MATCH_ORDERS_SELECTOR_V1,
+  MATCH_ORDERS_SELECTOR_V2,
   ROUTER_ADDRESSES,
   OrderSide,
 } from './utils/calldata-decoder.js';
@@ -606,9 +651,10 @@ import { WalletService } from './services/wallet-service.js';
 import { MarketService } from './services/market-service.js';
 import { TradingService } from './services/trading-service.js';
 import { RealtimeServiceV2 } from './services/realtime-service-v2.js';
-import { SmartMoneyService } from './services/smart-money-service.js';
+import { SmartMoneyCore } from './smart-money/core.js';
 import { BinanceService } from './services/binance-service.js';
 import { DipArbService } from './services/dip-arb-service.js';
+import { EventService } from './services/event-service.js';
 import type { UnifiedMarket, ProcessedOrderbook, ArbitrageOpportunity, KLineInterval, KLineCandle, DualKLineData, PolySDKOptions } from './core/types.js';
 import { createUnifiedCache, type UnifiedCache } from './core/unified-cache.js';
 
@@ -629,8 +675,10 @@ export class PolymarketSDK {
   // Services
   public readonly wallets: WalletService;
   public readonly markets: MarketService;
+  public readonly events: EventService;
   public readonly realtime: RealtimeServiceV2;
-  public readonly smartMoney: SmartMoneyService;
+  /** V2: SmartMoneyCore for leaderboard + wallet info. Use TradeMonitor/CopyEngine/PositionTracker directly for copy-trading. */
+  public readonly smartMoneyCore: SmartMoneyCore;
   public readonly binance: BinanceService;
   public readonly dipArb: DipArbService;
 
@@ -638,6 +686,13 @@ export class PolymarketSDK {
   private _initialized = false;
 
   constructor(config: PolymarketSDKConfig = {}) {
+    // V2 cutover (2026-04-28): order attribution is carried by the bytes32
+    // `builderCode` (Order.builder field), not by HMAC builder creds. The
+    // `PolymarketSDKConfig.builderCreds` field has been removed — HMAC creds
+    // are now only consumed by `RelayerService` directly for gasless TX
+    // envelopes (Safe deploy / wrap / transfer).
+    // See guide-polymarket-v2-migration for the full migration path.
+
     // Initialize infrastructure
     this.rateLimiter = new RateLimiter();
 
@@ -653,9 +708,14 @@ export class PolymarketSDK {
     this.tradingService = new TradingService(this.rateLimiter, this.cache, {
       privateKey,
       chainId: config.chainId,
+      signatureType: config.signatureType,
+      funderAddress: config.funderAddress,
       credentials: config.creds,
-      builderCreds: config.builderCreds,
+      // V2: order signing uses `builderCode` (bytes32) — HMAC creds belong
+      // to `RelayerService`, not the trading path.
+      builderCode: config.builderCode,
       safeAddress: config.safeAddress,
+      dataApi: this.dataApi,
     });
 
     this.subgraph = new SubgraphClient(this.rateLimiter, this.cache);
@@ -663,15 +723,17 @@ export class PolymarketSDK {
     // Initialize services
     this.wallets = new WalletService(this.dataApi, this.subgraph, this.cache);
     this.binance = new BinanceService(this.rateLimiter, this.cache);
-    this.markets = new MarketService(this.gammaApi, this.dataApi, this.rateLimiter, this.cache, undefined, this.binance);
-    this.realtime = new RealtimeServiceV2();
-    this.smartMoney = new SmartMoneyService(
-      this.wallets,
-      this.realtime,
-      this.tradingService,
-      this.dataApi,  // DataApiClient (required)
-      { mempoolWssUrl: config.mempoolWssUrl },
+    this.markets = new MarketService(
+      this.gammaApi,
+      this.dataApi,
+      this.rateLimiter,
+      this.cache,
+      { builderCode: config.builderCode },
+      this.binance
     );
+    this.events = new EventService(this.rateLimiter, this.cache);
+    this.realtime = new RealtimeServiceV2();
+    this.smartMoneyCore = new SmartMoneyCore(this.wallets);
 
     // Initialize DipArbService
     this.dipArb = new DipArbService(
@@ -769,7 +831,6 @@ export class PolymarketSDK {
    */
   stop(): void {
     this.dipArb.stop();
-    this.smartMoney.disconnect();
     this.realtime.disconnect();
   }
 

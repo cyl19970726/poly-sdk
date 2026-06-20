@@ -8,7 +8,7 @@
  * Run: npx tsx examples/06-services-demo.ts
  */
 
-import { PolymarketSDK, type KLineInterval } from '../src/index.js';
+import { PolymarketSDK, type KLineInterval, getBinaryTokens } from '../src/index.js';
 
 async function main() {
   console.log('=== Services Demo ===\n');
@@ -66,11 +66,17 @@ async function main() {
   // 5. Get unified market data
   console.log('5. Getting unified market data...');
   const unifiedMarket = await sdk.markets.getMarket(market.conditionId);
+  const binary = getBinaryTokens(unifiedMarket.tokens);
+  if (!binary) {
+    console.log('   Skipping binary market demo (market is not binary)');
+    return;
+  }
+  const [yesOutcome, noOutcome] = binary.outcomes;
+  const yesToken = binary.primary;
+  const noToken = binary.secondary;
   console.log(`   Source: ${unifiedMarket.source}`);
-  const yesToken = unifiedMarket.tokens.find(t => t.outcome === 'Yes');
-  const noToken = unifiedMarket.tokens.find(t => t.outcome === 'No');
-  console.log(`   YES Price: ${yesToken?.price}`);
-  console.log(`   NO Price: ${noToken?.price}`);
+  console.log(`   YES Price (${yesOutcome}): ${yesToken.price}`);
+  console.log(`   NO Price (${noOutcome}): ${noToken.price}`);
   console.log(`   Volume 24hr: $${unifiedMarket.volume24hr?.toLocaleString() || 'N/A'}\n`);
 
   // 6. Get K-Lines (OHLCV from trade data)
@@ -88,16 +94,16 @@ async function main() {
   }
 
   // 7. Get Dual K-Lines (OHLCV from trade data)
-  console.log('\n7. Getting dual K-Lines OHLCV (YES + NO)...');
+  console.log(`\n7. Getting dual K-Lines OHLCV (YES/${yesOutcome} + NO/${noOutcome})...`);
   const dualKlines = await sdk.markets.getDualKLinesOHLCV(market.conditionId, interval, { limit: 100 });
-  console.log(`   YES Candles: ${dualKlines.yes.length}`);
-  console.log(`   NO Candles: ${dualKlines.no.length}`);
+  console.log(`   YES Candles (${yesOutcome}): ${dualKlines.yes.length}`);
+  console.log(`   NO Candles (${noOutcome}): ${dualKlines.no.length}`);
 
   if (dualKlines.spreadAnalysis && dualKlines.spreadAnalysis.length > 0) {
     console.log('\n   Spread Analysis (last 3):');
     for (const point of dualKlines.spreadAnalysis.slice(-3)) {
       const date = new Date(point.timestamp).toLocaleString();
-      console.log(`   [${date}] YES:${point.yesPrice.toFixed(3)} + NO:${point.noPrice.toFixed(3)} = ${point.priceSpread.toFixed(4)} ${point.arbOpportunity}`);
+      console.log(`   [${date}] YES/${yesOutcome}:${point.yesPrice.toFixed(3)} + NO/${noOutcome}:${point.noPrice.toFixed(3)} = ${point.priceSpread.toFixed(4)} ${point.arbOpportunity}`);
     }
   }
 

@@ -6,7 +6,7 @@
  * IMPORTANT: Understanding Polymarket Orderbook
  * =============================================
  * Polymarket 订单簿的关键特性：买 YES @ P = 卖 NO @ (1-P)
- * 因此同一订单会在两个订单簿中出现
+ * 因此互补流动性在经济上等价。API 快照不应被假设为逐笔完全镜像。
  *
  * 正确的套利计算必须使用"有效价格"：
  * - effectiveBuyYes = min(YES.ask, 1 - NO.bid)

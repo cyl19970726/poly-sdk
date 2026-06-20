@@ -9,7 +9,7 @@
  * Run: npx ts-node examples/01-basic-usage.ts
  */
 
-import { PolymarketSDK } from '../src/index.js';
+import { PolymarketSDK, getBinaryTokens } from '../src/index.js';
 
 async function main() {
   console.log('=== Polymarket SDK Basic Usage ===\n');
@@ -22,11 +22,15 @@ async function main() {
   console.log(`   Found ${trendingMarkets.length} trending markets:\n`);
 
   for (const market of trendingMarkets) {
+    const yesOutcome = market.outcomes[0] || 'Outcome 1';
+    const noOutcome = market.outcomes[1] || 'Outcome 2';
     console.log(`   - ${market.question}`);
     console.log(`     Slug: ${market.slug}`);
     console.log(`     Volume: $${market.volume.toLocaleString()}`);
     console.log(`     24h Volume: $${market.volume24hr?.toLocaleString() || 'N/A'}`);
-    console.log(`     Prices: Yes=${market.outcomePrices[0]?.toFixed(2)}, No=${market.outcomePrices[1]?.toFixed(2)}`);
+    console.log(
+      `     Prices: YES/${yesOutcome}=${market.outcomePrices[0]?.toFixed(2)}, NO/${noOutcome}=${market.outcomePrices[1]?.toFixed(2)}`
+    );
     console.log('');
   }
 
@@ -37,25 +41,31 @@ async function main() {
     const unifiedMarket = await sdk.getMarket(firstMarket.slug);
     console.log(`   Question: ${unifiedMarket.question}`);
     console.log(`   Condition ID: ${unifiedMarket.conditionId}`);
-    const yesToken = unifiedMarket.tokens.find(t => t.outcome === 'Yes');
-    const noToken = unifiedMarket.tokens.find(t => t.outcome === 'No');
-    console.log(`   YES Token ID: ${yesToken?.tokenId}`);
-    console.log(`   NO Token ID: ${noToken?.tokenId}`);
-    console.log(`   YES Price: ${yesToken?.price.toFixed(4)}`);
-    console.log(`   NO Price: ${noToken?.price.toFixed(4)}`);
+    const binary = getBinaryTokens(unifiedMarket.tokens);
+    if (!binary) {
+      console.log('   Skipping orderbook demo (market is not binary)');
+      return;
+    }
+    const [yesOutcome, noOutcome] = binary.outcomes;
+    const yesToken = binary.primary;
+    const noToken = binary.secondary;
+    console.log(`   YES Token ID (${yesOutcome}): ${yesToken.tokenId}`);
+    console.log(`   NO Token ID (${noOutcome}): ${noToken.tokenId}`);
+    console.log(`   YES Price (${yesOutcome}): ${yesToken.price.toFixed(4)}`);
+    console.log(`   NO Price (${noOutcome}): ${noToken.price.toFixed(4)}`);
     console.log(`   Source: ${unifiedMarket.source}`);
     console.log('');
 
     // 3. Get orderbook
     console.log('3. Getting orderbook...');
     const orderbook = await sdk.getOrderbook(unifiedMarket.conditionId);
-    console.log(`   YES Best Bid: ${orderbook.yes.bid.toFixed(4)} (size: ${orderbook.yes.bidSize.toFixed(2)})`);
-    console.log(`   YES Best Ask: ${orderbook.yes.ask.toFixed(4)} (size: ${orderbook.yes.askSize.toFixed(2)})`);
-    console.log(`   YES Spread: ${(orderbook.yes.spread * 100).toFixed(2)}%`);
+    console.log(`   YES Best Bid (${yesOutcome}): ${orderbook.yes.bid.toFixed(4)} (size: ${orderbook.yes.bidSize.toFixed(2)})`);
+    console.log(`   YES Best Ask (${yesOutcome}): ${orderbook.yes.ask.toFixed(4)} (size: ${orderbook.yes.askSize.toFixed(2)})`);
+    console.log(`   YES Spread (${yesOutcome}): ${(orderbook.yes.spread * 100).toFixed(2)}%`);
     console.log('');
-    console.log(`   NO Best Bid: ${orderbook.no.bid.toFixed(4)} (size: ${orderbook.no.bidSize.toFixed(2)})`);
-    console.log(`   NO Best Ask: ${orderbook.no.ask.toFixed(4)} (size: ${orderbook.no.askSize.toFixed(2)})`);
-    console.log(`   NO Spread: ${(orderbook.no.spread * 100).toFixed(2)}%`);
+    console.log(`   NO Best Bid (${noOutcome}): ${orderbook.no.bid.toFixed(4)} (size: ${orderbook.no.bidSize.toFixed(2)})`);
+    console.log(`   NO Best Ask (${noOutcome}): ${orderbook.no.ask.toFixed(4)} (size: ${orderbook.no.askSize.toFixed(2)})`);
+    console.log(`   NO Spread (${noOutcome}): ${(orderbook.no.spread * 100).toFixed(2)}%`);
     console.log('');
     console.log(`   Ask Sum (YES+NO): ${orderbook.summary.askSum.toFixed(4)}`);
     console.log(`   Bid Sum (YES+NO): ${orderbook.summary.bidSum.toFixed(4)}`);

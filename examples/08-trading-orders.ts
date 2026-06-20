@@ -22,12 +22,15 @@ import {
   calculateBuyAmount,
   checkArbitrage,
   formatUSDC,
+  getBinaryTokens,
   createUnifiedCache,
   type TickSize,
 } from '../src/index.js';
 
 // Test wallet private key (empty wallet for safety)
 const PRIVATE_KEY = process.env.POLYMARKET_PRIVATE_KEY || '0xYOUR_PRIVATE_KEY_HERE';
+const SIGNATURE_TYPE = Number(process.env.POLYMARKET_SIGNATURE_TYPE || '0') as 0 | 1 | 2;
+const FUNDER_ADDRESS = process.env.POLYMARKET_FUNDER || '';
 
 async function main() {
   console.log('=== Polymarket Trading Examples (TradingService) ===\n');
@@ -38,6 +41,8 @@ async function main() {
   const cache = createUnifiedCache();
   const tradingService = new TradingService(rateLimiter, cache, {
     privateKey: PRIVATE_KEY,
+    signatureType: SIGNATURE_TYPE,
+    funderAddress: FUNDER_ADDRESS || undefined,
   });
 
   // ===== 1. Find an Active Market =====
@@ -68,18 +73,20 @@ async function main() {
 
   // Get market data from CLOB via MarketService (no private key required)
   const market = await sdk.markets.getClobMarket(gammaMarket.conditionId);
-  const yesToken = market.tokens.find((t) => t.outcome === 'Yes');
-  const noToken = market.tokens.find((t) => t.outcome === 'No');
+  const binary = market ? getBinaryTokens(market.tokens) : null;
 
-  if (!yesToken || !noToken) {
-    console.log('   Could not find tokens');
+  if (!binary) {
+    console.log('   Could not find a binary token pair');
     return;
   }
+  const [yesOutcome, noOutcome] = binary.outcomes;
+  const yesToken = binary.primary;
+  const noToken = binary.secondary;
 
-  console.log(`   YES Token: ${yesToken.tokenId.slice(0, 20)}...`);
-  console.log(`   NO Token: ${noToken.tokenId.slice(0, 20)}...`);
-  console.log(`   YES Price: $${yesToken.price}`);
-  console.log(`   NO Price: $${noToken.price}`);
+  console.log(`   YES Token (${yesOutcome}): ${yesToken.tokenId.slice(0, 20)}...`);
+  console.log(`   NO Token (${noOutcome}): ${noToken.tokenId.slice(0, 20)}...`);
+  console.log(`   YES Price (${yesOutcome}): $${yesToken.price}`);
+  console.log(`   NO Price (${noOutcome}): $${noToken.price}`);
 
   // ===== 2. Price Utilities Demo =====
   console.log('\n2. Price Utilities Demo\n');
@@ -108,7 +115,7 @@ async function main() {
   const price = 0.52;
   const size = 100;
   const amount = calculateBuyAmount(price, size);
-  console.log(`\n   Order: BUY ${size} YES @ $${price}`);
+  console.log(`\n   Order: BUY ${size} YES (${yesOutcome}) @ $${price}`);
   console.log(`   Cost: ${formatUSDC(amount)}`);
 
   // ===== 3. Arbitrage Detection =====
@@ -117,8 +124,8 @@ async function main() {
   // Get current orderbook via MarketService (no private key required)
   const orderbook = await sdk.markets.getProcessedOrderbook(gammaMarket.conditionId);
 
-  console.log(`   YES: Bid $${orderbook.yes.bid} / Ask $${orderbook.yes.ask}`);
-  console.log(`   NO:  Bid $${orderbook.no.bid} / Ask $${orderbook.no.ask}`);
+  console.log(`   YES (${yesOutcome}): Bid $${orderbook.yes.bid} / Ask $${orderbook.yes.ask}`);
+  console.log(`   NO (${noOutcome}): Bid $${orderbook.no.bid} / Ask $${orderbook.no.ask}`);
 
   const arb = checkArbitrage(
     orderbook.yes.ask,
@@ -145,7 +152,7 @@ async function main() {
       tokenId: yesToken.tokenId,
       interval: '1d',
     });
-    console.log(`   Got ${priceHistory.length} price points for YES token`);
+    console.log(`   Got ${priceHistory.length} price points for YES token (${yesOutcome})`);
     if (priceHistory.length > 0) {
       const latest = priceHistory[priceHistory.length - 1];
       console.log(`   Latest: ${new Date(latest.timestamp * 1000).toLocaleDateString()} @ $${latest.price.toFixed(4)}`);

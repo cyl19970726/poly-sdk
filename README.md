@@ -132,7 +132,7 @@ poly-sdk Architecture
 │  └────────────┘ └────────────┘ └────────────┘ └────────────┘ └────────────┘ │
 │                                                                               │
 │  Uses Official Polymarket Clients:                                           │
-│  • @polymarket/clob-client - Trading, orderbook, market data                 │
+│  • @polymarket/clob-client-v2 - Trading, orderbook, market data              │
 │  • @polymarket/real-time-data-client - WebSocket real-time updates           │
 │                                                                               │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -177,9 +177,13 @@ const sdk = new PolymarketSDK();
 
 // Get market by slug or condition ID
 const market = await sdk.getMarket('will-trump-win-2024');
+const binary = getBinaryTokens(market.tokens);
+if (!binary) throw new Error('Expected binary market');
+const yesToken = binary.primary;
+const noToken = binary.secondary;
 console.log(`${market.question}`);
-console.log(`YES: ${market.tokens.find(t => t.outcome === 'Yes')?.price}`);
-console.log(`NO: ${market.tokens.find(t => t.outcome === 'No')?.price}`);
+console.log(`YES (${yesToken.outcome}): ${yesToken.price}`);
+console.log(`NO (${noToken.outcome}): ${noToken.price}`);
 
 // Get processed orderbook with analytics
 const orderbook = await sdk.getOrderbook(market.conditionId);
@@ -220,6 +224,28 @@ const openOrders = await sdk.tradingService.getOpenOrders();
 console.log(`Open orders: ${openOrders.length}`);
 
 // Clean up when done
+sdk.stop();
+```
+
+### Email / Magic Login (funder account)
+
+```typescript
+import { PolymarketSDK, getBinaryTokens } from '@catalyst-team/poly-sdk';
+
+const sdk = await PolymarketSDK.create({
+  privateKey: process.env.POLYMARKET_PRIVATE_KEY!, // Exported signer private key
+  signatureType: 1,                                // Magic / Email login
+  funderAddress: process.env.POLYMARKET_FUNDER!,   // Polymarket profile address shown in the UI
+});
+
+const order = await sdk.tradingService.createLimitOrder({
+  tokenId: yesTokenId,
+  side: 'BUY',
+  price: 0.45,
+  size: 10,
+  orderType: 'GTC',
+});
+
 sdk.stop();
 ```
 
@@ -275,11 +301,11 @@ sdk.stop();  // Disconnect all services
 
 ### TradingService
 
-Order management using `@polymarket/clob-client`.
+Order management using `@polymarket/clob-client-v2`.
 
 **Important: Polymarket Order Minimums**
 - **Minimum order size**: 5 shares (`MIN_ORDER_SIZE_SHARES`)
-- **Minimum order value**: $1 USDC (`MIN_ORDER_VALUE_USDC`)
+- **Minimum order value**: $1 pUSD notional (`MIN_ORDER_VALUE_USDC`, legacy constant name)
 - Orders below these limits are validated and rejected before sending to API
 
 ```typescript
@@ -317,7 +343,7 @@ const gtdOrder = await trading.createLimitOrder({
 const fokOrder = await trading.createMarketOrder({
   tokenId: yesTokenId,
   side: 'BUY',
-  amount: 10, // $10 USDC
+  amount: 10, // $10 pUSD notional
   orderType: 'FOK',
 });
 
@@ -392,10 +418,10 @@ const signals = await sdk.markets.detectMarketSignals(conditionId);
 Buy YES @ P = Sell NO @ (1-P)
 ```
 
-This means the **same order appears in both orderbooks**. Simple addition causes double-counting:
+This means complementary liquidity can be matched through the opposite outcome view. Simple addition can double-count executable liquidity:
 
 ```typescript
-// WRONG: Double counts mirror orders
+// WRONG: Can double-count complementary liquidity
 const askSum = YES.ask + NO.ask;  // ~1.998, not ~1.0
 
 // CORRECT: Use effective prices
@@ -434,26 +460,28 @@ if (!status.ready) {
 
 // ===== CTF Operations =====
 
-// Split: USDC -> YES + NO tokens
+// Split: pUSD -> YES + NO tokens
 const splitResult = await onchain.split(conditionId, '100');
 
-// Merge: YES + NO -> USDC (for arbitrage)
+// Merge: YES + NO -> pUSD (for arbitrage)
 const mergeResult = await onchain.mergeByTokenIds(conditionId, tokenIds, '100');
 
-// Redeem: Winning tokens -> USDC (after resolution)
+// Redeem: Winning tokens -> pUSD (after resolution)
 const redeemResult = await onchain.redeemByTokenIds(conditionId, tokenIds);
 
 // ===== DEX Swaps (QuickSwap V3) =====
 
-// Swap MATIC to USDC.e (required for CTF)
+// Swap MATIC to USDC.e if you need the onramp rail, then wrap to pUSD
 await onchain.swap('MATIC', 'USDC_E', '50');
 
 // Get balances
 const balances = await onchain.getBalances();
+const pusdBalance = await onchain.getPusdBalance();
 console.log(`USDC.e: ${balances.usdcE}`);
+console.log(`pUSD: ${pusdBalance}`);
 ```
 
-**Note**: Polymarket CTF requires **USDC.e** (0x2791...), not native USDC.
+**Note**: Current CLOB V2 trading and CTF operations use **pUSD**. USDC.e remains useful for onramp/offramp flows, but should be wrapped to pUSD before V2 trading operations.
 
 ---
 
@@ -622,11 +650,11 @@ const arbService = new ArbitrageService({
   maxTradeSize: 100,       // $100 maximum
   autoExecute: true,       // Auto-execute opportunities
 
-  // Rebalancer: auto-maintain USDC/token ratio
+  // Rebalancer: auto-maintain pUSD/token ratio
   enableRebalancer: true,
-  minUsdcRatio: 0.2,       // Min 20% USDC
-  maxUsdcRatio: 0.8,       // Max 80% USDC
-  targetUsdcRatio: 0.5,    // Target when rebalancing
+  minUsdcRatio: 0.2,       // Min 20% pUSD (legacy option name)
+  maxUsdcRatio: 0.8,       // Max 80% pUSD (legacy option name)
+  targetUsdcRatio: 0.5,    // Target pUSD ratio when rebalancing
 
   // Execution safety
   sizeSafetyFactor: 0.8,   // Use 80% of orderbook depth
@@ -811,8 +839,9 @@ const noPrice = market.tokens.no.price;
 **After (v0.3.0)**:
 ```typescript
 // Array of MarketToken objects
-const yesToken = market.tokens.find(t => t.outcome === 'Yes');
-const noToken = market.tokens.find(t => t.outcome === 'No');
+const binary = getBinaryTokens(market.tokens);
+const yesToken = binary?.primary;
+const noToken = binary?.secondary;
 
 const yesPrice = yesToken?.price;
 const noPrice = noToken?.price;
@@ -822,13 +851,13 @@ const noPrice = noToken?.price;
 
 ```typescript
 // Helper function for migration
-function getTokenPrice(market: UnifiedMarket, outcome: 'Yes' | 'No'): number {
-  return market.tokens.find(t => t.outcome === outcome)?.price ?? 0;
+function getTokenPrice(market: UnifiedMarket, side: 'yes' | 'no'): number {
+  return market.tokens[side === 'yes' ? 0 : 1]?.price ?? 0;
 }
 
 // Usage
-const yesPrice = getTokenPrice(market, 'Yes');
-const noPrice = getTokenPrice(market, 'No');
+const yesPrice = getTokenPrice(market, 'yes');
+const noPrice = getTokenPrice(market, 'no');
 ```
 
 **Why the change?** The array format better supports multi-outcome markets and is more consistent with the Polymarket API response format.
@@ -946,7 +975,7 @@ import type {
 
 ## Dependencies
 
-- `@polymarket/clob-client` - Official CLOB trading client
+- `@polymarket/clob-client-v2` - Official CLOB trading client
 - `@polymarket/real-time-data-client` - Official WebSocket client
 - `ethers@5` - Blockchain interactions
 - `bottleneck` - Rate limiting

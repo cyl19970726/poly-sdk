@@ -3,7 +3,7 @@
  *
  * Core Design Philosophy:
  * - Unifies order creation + lifecycle monitoring in one component
- * - Encapsulates all Polymarket-specific details (USDC.e, tick size, tokenId, CTF, Polygon)
+ * - Encapsulates Polymarket-specific details (pUSD collateral, tick size, tokenId, CTF, Polygon)
  * - Provides complete lifecycle events (CLOB match → tx submit → on-chain confirm)
  * - Auto-validates orders before submission (market state, balance, precision)
  * - Auto-watches orders after creation
@@ -166,7 +166,7 @@
  * const fokResult = await orderMgr.createMarketOrder({
  *   tokenId: '0x...',
  *   side: 'BUY',
- *   amount: 50, // $50 USDC
+ *   amount: 50, // $50 pUSD notional
  *   orderType: 'FOK',
  * });
  *
@@ -190,6 +190,9 @@ import type { UnifiedCache } from '../core/unified-cache.js';
 import { OrderStatus, type Side } from '../core/types.js';
 import { mapApiStatusToInternal, isTerminalStatus, isValidStatusTransition } from '../core/order-status.js';
 import { PolymarketError, ErrorCode } from '../core/errors.js';
+import { createModuleLogger } from '../core/logger.js';
+
+const log = createModuleLogger('order-manager');
 
 // ============================================================================
 // Configuration & Types
@@ -198,6 +201,10 @@ import { PolymarketError, ErrorCode } from '../core/errors.js';
 export interface OrderManagerConfig {
   /** Private key for signing transactions */
   privateKey: string;
+  /** Polymarket signature type. Use 1 for Magic / Email login. */
+  signatureType?: 0 | 1 | 2;
+  /** Polymarket profile / funder address. Required with signatureType 1. */
+  funderAddress?: string;
   /** Rate limiter for API calls */
   rateLimiter: RateLimiter;
   /** Cache for market metadata */
@@ -210,8 +217,11 @@ export interface OrderManagerConfig {
   pollingInterval?: number;
   /** RPC URL for Polygon provider (for settlement tracking) */
   polygonRpcUrl?: string;
-  /** Builder API credentials (for gasless operations and fee sharing) */
-  builderCreds?: { key: string; secret: string; passphrase: string };
+  /**
+   * V2 builder code (bytes32). Embedded in every signed order's `builder`
+   * field on V2. Falls back to `POLY_BUILDER_CODE` env var when omitted.
+   */
+  builderCode?: string;
   /** Gnosis Safe address — required for Builder mode so orders use Safe as maker */
   safeAddress?: string;
 }
@@ -586,10 +596,23 @@ export class OrderHandleImpl implements OrderHandle {
 
     const onCancelled = (event: CancelEvent) => {
       if (event.orderId !== this._orderId) return;
-      this._status = 'cancelled';
-      this._order = event.order;
-      this.invokeHandlers('cancelled', event.order);
-      this.resolveTerminal('cancelled', 'Order cancelled');
+      // FAK race condition fix: USER_TRADE fill events may arrive slightly after
+      // the CANCELLATION event. If we have no fills yet, wait 500ms to allow any
+      // in-flight fill events to be processed before we notify business layer and
+      // call cleanup(). If fills already exist we resolve immediately.
+      if (this._fills.length > 0) {
+        this._status = 'cancelled';
+        this._order = event.order;
+        this.invokeHandlers('cancelled', event.order);
+        this.resolveTerminal('cancelled', 'Order cancelled');
+      } else {
+        setTimeout(() => {
+          this._status = 'cancelled';
+          this._order = event.order;
+          this.invokeHandlers('cancelled', event.order);
+          this.resolveTerminal('cancelled', 'Order cancelled');
+        }, 500);
+      }
     };
 
     const onExpired = (event: ExpireEvent) => {
@@ -677,7 +700,8 @@ export class OrderManager extends EventEmitter {
   private polygonProvider: ethers.providers.Provider | null = null;
 
   // ========== Configuration ==========
-  private config: Required<Omit<OrderManagerConfig, 'builderCreds' | 'safeAddress'>> & Pick<OrderManagerConfig, 'builderCreds' | 'safeAddress'>;
+  private config: Required<Omit<OrderManagerConfig, 'signatureType' | 'funderAddress' | 'builderCode' | 'safeAddress'>> &
+    Pick<OrderManagerConfig, 'signatureType' | 'funderAddress' | 'builderCode' | 'safeAddress'>;
   private initialized = false;
 
   // ========== Monitoring State ==========
@@ -709,13 +733,18 @@ export class OrderManager extends EventEmitter {
     const cache = config.cache || createUnifiedCache();
 
     // Initialize TradingService (always needed)
+    // V2: order signing reads `builderCode` (bytes32). HMAC creds are no
+    // longer threaded through OrderManager — RelayerService owns that path
+    // directly (gasless TX envelopes for deploy/wrap/transfer).
     this.tradingService = new TradingService(
       rateLimiter,
       cache,
       {
         privateKey: config.privateKey,
+        signatureType: config.signatureType,
+        funderAddress: config.funderAddress,
         chainId: this.config.chainId,
-        builderCreds: config.builderCreds,
+        builderCode: config.builderCode,
         safeAddress: config.safeAddress,
       }
     );
@@ -782,7 +811,7 @@ export class OrderManager extends EventEmitter {
    *
    * Auto-validates (Polymarket-specific):
    * - Market state (active, not closed)
-   * - USDC.e balance
+   * - pUSD balance
    * - Tick size (0.01)
    * - Minimum size (5 shares)
    * - Minimum value ($1)
@@ -914,7 +943,7 @@ export class OrderManager extends EventEmitter {
         tokenId: params.tokenId,
         side: params.side,
         price: params.price || 0, // Market orders may not have a fixed price
-        originalSize: params.amount, // For market orders, amount is in USDC
+        originalSize: params.amount, // For market orders, amount is pUSD notional
         filledSize: 0,
         remainingSize: params.amount,
         associateTrades: [],
@@ -1230,16 +1259,16 @@ export class OrderManager extends EventEmitter {
     // Connect to WebSocket and wait for connection to be established
     // connect() is async and returns a Promise that resolves when connected
     if (this.realtimeService) {
-      console.log(`[OrderManager] Connecting to WebSocket...`);
+      log.info(`[OrderManager] Connecting to WebSocket...`);
       await this.realtimeService.connect();
-      console.log(`[OrderManager] WebSocket connected successfully`);
+      log.info(`[OrderManager] WebSocket connected successfully`);
     }
 
     // Subscribe to user events (requires credentials)
     // Now safe to subscribe since connection is established
     const credentials = this.tradingService.getCredentials();
     if (credentials && this.realtimeService) {
-      console.log(`[OrderManager] Subscribing to user events...`);
+      log.info(`[OrderManager] Subscribing to user events...`);
       // Map ApiCredentials (key) to ClobApiKeyCreds (apiKey) format
       const clobAuth = {
         apiKey: credentials.key,
@@ -1250,7 +1279,7 @@ export class OrderManager extends EventEmitter {
         onOrder: this.handleUserOrder.bind(this),
         onTrade: this.handleUserTrade.bind(this),
       });
-      console.log(`[OrderManager] User events subscription complete`);
+      log.info(`[OrderManager] User events subscription complete`);
     }
   }
 
@@ -1305,10 +1334,9 @@ export class OrderManager extends EventEmitter {
    */
   private async handleUserTrade(userTrade: UserTrade): Promise<void> {
     // Debug: Log all incoming USER_TRADE events
-    console.log(`[OrderManager] WebSocket USER_TRADE received:`, {
+    log.info(`WebSocket USER_TRADE received`, {
       tradeId: userTrade.tradeId,
       takerOrderId: userTrade.takerOrderId,
-      makerOrderIds: userTrade.makerOrders?.map(m => m.orderId),
       size: userTrade.size,
       price: userTrade.price,
       status: userTrade.status,
@@ -1336,11 +1364,11 @@ export class OrderManager extends EventEmitter {
     }
 
     if (!watched) {
-      console.log(`[OrderManager] USER_TRADE not for any watched order, ignoring`);
+      log.debug(`[OrderManager] USER_TRADE not for any watched order, ignoring`);
       return;
     }
 
-    console.log(`[OrderManager] USER_TRADE matched watched order: ${watched.orderId}`);
+    log.debug(`[OrderManager] USER_TRADE matched watched order: ${watched.orderId}`);
 
     // Bug 16 Fix: When we're the maker, use maker-specific matchedAmount and price
     // userTrade.size is the TOTAL trade size (sum of all makers), not our individual fill
@@ -1351,7 +1379,7 @@ export class OrderManager extends EventEmitter {
 
     // Debug: Log raw values for verification
     if (makerInfo) {
-      console.log(`[OrderManager] Maker fill debug:`, {
+      log.debug(`[OrderManager] Maker fill debug:`, {
         rawMatchedAmount,
         makerOrdersLength: userTrade.makerOrders?.length,
         willApplyFallback: fillSize === 0 || fillSize === undefined,
@@ -1366,12 +1394,12 @@ export class OrderManager extends EventEmitter {
     // Fallback: if matchedAmount is 0/undefined and we're a maker, use trade size
     // This shouldn't happen now that we're reading the correct field, but kept as safety
     if (makerInfo && (fillSize === 0 || fillSize === undefined)) {
-      console.log(`[OrderManager] Fallback applied: using userTrade.size ${userTrade.size} instead of ${fillSize}`);
+      log.debug(`[OrderManager] Fallback applied: using userTrade.size ${userTrade.size} instead of ${fillSize}`);
       fillSize = userTrade.size;
     }
     const fillPrice = makerInfo?.price ?? userTrade.price;
 
-    console.log(`[OrderManager] USER_TRADE fill details:`, {
+    log.debug(`[OrderManager] USER_TRADE fill details:`, {
       isMaker: !!makerInfo,
       fillSize,
       fillPrice,
@@ -1389,12 +1417,18 @@ export class OrderManager extends EventEmitter {
     this.processedEvents.add(eventKey);
 
     // Emit fill event
-    // Calculate remaining size after this fill
-    const remainingAfterFill = watched.order.originalSize - (watched.order.filledSize + fillSize);
-    // Complete fill if: sum >= originalSize OR remaining is zero/negative
-    // Note: For market orders (FOK/FAK), originalSize is in USDC but filledSize is in shares,
+    // Calculate remaining size after this fill.
+    // IMPORTANT: update filledSize BEFORE computing isCompleteFill so that successive
+    // USER_TRADE events (arriving before USER_ORDER UPDATE) see the correct cumulative total.
+    // Previously filledSize was only updated in handleUserOrder, causing rapid partial fills
+    // to all use filledSize=0 and potentially misclassify the last partial as non-complete.
+    watched.order.filledSize += fillSize;
+
+    const remainingAfterFill = watched.order.originalSize - watched.order.filledSize;
+    // Complete fill if: cumulative >= originalSize OR remaining is zero/negative
+    // Note: For market orders (FOK/FAK), originalSize is pUSD notional but filledSize is in shares,
     // causing remainingAfterFill to be negative. This is still a complete fill.
-    const isCompleteFill = watched.order.filledSize + fillSize >= watched.order.originalSize ||
+    const isCompleteFill = watched.order.filledSize >= watched.order.originalSize ||
       remainingAfterFill <= 0;
 
     const fillEvent: FillEvent = {
@@ -1408,8 +1442,8 @@ export class OrderManager extends EventEmitter {
         timestamp: userTrade.timestamp,
         transactionHash: userTrade.transactionHash,
       },
-      cumulativeFilled: watched.order.filledSize + fillSize,
-      remainingSize: watched.order.originalSize - (watched.order.filledSize + fillSize),
+      cumulativeFilled: watched.order.filledSize,
+      remainingSize: remainingAfterFill,
       isCompleteFill,
     };
 
@@ -1485,7 +1519,7 @@ export class OrderManager extends EventEmitter {
       const fillDelta = newFilledSize - oldFilledSize;
       // Check for complete fill using status (preferred) or remainingSize
       // Note: For market orders (FOK/FAK), remainingSize may be negative due to unit mismatch
-      // (originalSize is in USDC, filledSize is in shares), so we rely on status
+      // (originalSize is pUSD notional, filledSize is in shares), so we rely on status
       const isCompleteFill = freshOrder.status === OrderStatus.FILLED ||
         freshOrder.remainingSize === 0 ||
         freshOrder.remainingSize <= 0;
@@ -1654,10 +1688,10 @@ export class OrderManager extends EventEmitter {
         this.emit('transaction_confirmed', settlementEvent);
       }
     } catch (error) {
-      this.emit(
-        'error',
-        new Error(`Settlement tracking failed for ${transactionHash}: ${error}`)
-      );
+      // Log as warning instead of emitting 'error' event — settlement tracking
+      // failure is non-fatal (transient RPC outage). Emitting 'error' without a
+      // registered listener causes an unhandled rejection that crashes the process.
+      log.warn(`Settlement tracking failed for ${transactionHash}: ${error}`);
     }
   }
 

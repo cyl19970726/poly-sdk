@@ -15,6 +15,7 @@ import {
   RateLimiter,
   PolymarketSDK,
   formatUSDC,
+  getBinaryTokens,
   createUnifiedCache,
 } from '../src/index.js';
 
@@ -60,10 +61,12 @@ async function main() {
 
         // Show token prices
         if (reward.tokens.length > 0) {
-          const yesToken = reward.tokens.find(t => t.outcome === 'Yes');
-          const noToken = reward.tokens.find(t => t.outcome === 'No');
-          if (yesToken && noToken) {
-            console.log(`   YES Price: $${yesToken.price.toFixed(2)} | NO Price: $${noToken.price.toFixed(2)}`);
+          const binary = getBinaryTokens(reward.tokens);
+          if (binary) {
+            const [yesOutcome, noOutcome] = binary.outcomes;
+            console.log(
+              `   YES Price (${yesOutcome}): $${binary.primary.price.toFixed(2)} | NO Price (${noOutcome}): $${binary.secondary.price.toFixed(2)}`
+            );
           }
         }
       }
@@ -150,7 +153,7 @@ async function main() {
     console.log('   ├─────────────────────────────────────────────────────────────┤');
     console.log('   │ 1. Keep orders within max_spread of the midpoint            │');
     console.log('   │ 2. Maintain minimum size (check rewardsMinSize)             │');
-    console.log('   │ 3. Quote both sides (YES and NO) for higher score           │');
+    console.log('   │ 3. Quote both outcome sides for a higher score              │');
     console.log('   │ 4. Stay active throughout the day (rewards sample minutely) │');
     console.log('   │ 5. Focus on markets with higher daily rates                 │');
     console.log('   │ 6. Avoid wide spreads - tighter = higher score              │');

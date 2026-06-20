@@ -35,13 +35,13 @@
 │                    CTF 核心机制                                  │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  核心等式: YES token + NO token = 1 USDC                        │
+│  核心等式: YES token + NO token = 1 pUSD                        │
 │                                                                  │
 │  三个核心操作:                                                   │
 │  ┌─────────┐   ┌─────────┐   ┌─────────┐                        │
 │  │  Split  │   │  Merge  │   │ Redeem  │                        │
-│  │ 1 USDC  │   │ YES+NO  │   │ Winner  │                        │
-│  │→YES+NO  │   │→1 USDC  │   │→1 USDC  │                        │
+│  │ 1 pUSD  │   │ YES+NO  │   │ Winner  │                        │
+│  │→YES+NO  │   │→1 pUSD  │   │→1 pUSD  │                        │
 │  └─────────┘   └─────────┘   └─────────┘                        │
 │                                                                  │
 │  Token 结构:                                                     │
@@ -97,12 +97,12 @@
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  乐观预言机:                                                     │
-│  - 提议 → 48h 争议期 → 最终结算                                  │
+│  - 提议 → 2h challenge → 无争议结算；被争议才进入 UMA DVM 流程     │
 │  - 争议需要 bond (通常 $99,750)                                  │
 │                                                                  │
 │  结算结果:                                                       │
-│  - 0 = NO wins (NO token → 1 USDC)                              │
-│  - 1 = YES wins (YES token → 1 USDC)                            │
+│  - 0 = NO wins (NO token → 1 pUSD)                              │
+│  - 1 = YES wins (YES token → 1 pUSD)                            │
 │                                                                  │
 │  相关字段 (Gamma API):                                           │
 │  - umaEndDate                                                   │
@@ -116,7 +116,7 @@
 
 **SDK 设计启示**：
 - 需要跟踪结算状态
-- 争议期内市场仍可交易
+- 2h challenge 期间及争议升级期间市场状态需按 API 字段动态判断
 - 结算后需要查询 Subgraph 获取历史数据
 
 ---

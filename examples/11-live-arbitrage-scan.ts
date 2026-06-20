@@ -41,6 +41,8 @@ async function main() {
     question: string;
     slug: string;
     conditionId: string;
+    yesOutcome: string;
+    noOutcome: string;
     type: 'long' | 'short';
     yesAsk: number;
     noAsk: number;
@@ -76,10 +78,14 @@ async function main() {
       // Store all markets for analysis (even with negative arb profit)
       // This helps us understand market efficiency
       if (orderbook.yes.ask > 0 && orderbook.no.ask > 0) {
+        const yesOutcome = market.outcomes?.[0] || 'Outcome 1';
+        const noOutcome = market.outcomes?.[1] || 'Outcome 2';
         opportunities.push({
           question: market.question?.slice(0, 60) || 'Unknown',
           slug: market.slug || '',
           conditionId: market.conditionId,
+          yesOutcome,
+          noOutcome,
           type: arb?.type || (orderbook.summary.longArbProfit > orderbook.summary.shortArbProfit ? 'long' : 'short'),
           yesAsk: orderbook.yes.ask,
           noAsk: orderbook.no.ask,
@@ -132,8 +138,8 @@ async function main() {
 
       console.log(`   │ ${opp.question.padEnd(60)} │`);
       console.log(`   │                                                                │`);
-      console.log(`   │   YES: ask=${opp.yesAsk.toFixed(4)} bid=${opp.yesBid.toFixed(4)}                               │`);
-      console.log(`   │   NO:  ask=${opp.noAsk.toFixed(4)} bid=${opp.noBid.toFixed(4)}                               │`);
+      console.log(`   │   YES/${opp.yesOutcome}: ask=${opp.yesAsk.toFixed(4)} bid=${opp.yesBid.toFixed(4)}                               │`);
+      console.log(`   │   NO/${opp.noOutcome}: ask=${opp.noAsk.toFixed(4)} bid=${opp.noBid.toFixed(4)}                               │`);
       console.log(`   │   Sum: askSum=${opp.askSum.toFixed(4)} bidSum=${opp.bidSum.toFixed(4)}                      │`);
       console.log(`   │   ${arbType} Profit: ${(maxProfit * 100).toFixed(2)}% ${isProfitable ? '✅' : '❌'}                                     │`);
       console.log(`   │   24h Volume: $${opp.volume24h.toLocaleString()}                                       │`);

@@ -12,6 +12,15 @@ import type { CacheAdapter } from '@catalyst-team/cache';
 export type Side = 'BUY' | 'SELL';
 
 /**
+ * Polymarket signer mode used by the CLOB.
+ * - 0: Browser / EOA wallet
+ * - 1: Magic / Email login (requires profile/funder address)
+ * - 2: Polymarket Gnosis Safe / Builder mode
+ * - 3: Deposit wallet / POLY_1271
+ */
+export type PolymarketSignatureType = 0 | 1 | 2 | 3;
+
+/**
  * Order type for limit/market orders
  * - GTC: Good Till Cancelled (default for limit orders)
  * - GTD: Good Till Date (limit order with expiration)
@@ -48,6 +57,7 @@ export type OrderType = 'GTC' | 'FOK' | 'GTD' | 'FAK';
  *
  * State Mapping (Polymarket API → Internal):
  * - API "live"      → open (order in orderbook, no fills)
+ * - API "unmatched" → open (accepted by CLOB, not matched yet)
  * - API "matched"   → partially_filled (some fills) OR filled (fully filled)
  * - API "delayed"   → pending (order submitted but not yet in orderbook)
  * - API "cancelled" → cancelled
@@ -75,7 +85,7 @@ export enum OrderStatus {
   /**
    * open - Order submitted and active in orderbook, no fills yet
    *
-   * Polymarket API status: "live"
+   * Polymarket API status: "live" or "unmatched"
    * Transitions:
    * - → partially_filled (first fill received)
    * - → filled (immediate full fill, rare)
@@ -89,7 +99,9 @@ export enum OrderStatus {
   /**
    * partially_filled - Order has received some fills but not complete
    *
-   * Polymarket API status: "matched" (size_matched > 0 && size_matched < original_size)
+   * Polymarket API status: "matched" (size_matched > 0 && size_matched < original_size).
+   * If an active-looking status such as "live" or "unmatched" reports size_matched > 0,
+   * local accounting still derives partially_filled from quantity.
    * Transitions:
    * - → filled (remaining size filled)
    * - → cancelled (user cancels remaining)
@@ -251,6 +263,18 @@ export interface PolySDKOptions {
   privateKey?: string;
 
   /**
+   * Polymarket signature type.
+   * Use `1` for Magic / Email login exported private keys.
+   */
+  signatureType?: PolymarketSignatureType;
+
+  /**
+   * Polymarket profile / funder address.
+   * Required together with `signatureType: 1` for Magic / Email login.
+   */
+  funderAddress?: string;
+
+  /**
    * API credentials for trading
    */
   creds?: {
@@ -267,21 +291,39 @@ export interface PolySDKOptions {
   mempoolWssUrl?: string;
 
   /**
-   * Builder API credentials for fee sharing and gasless order execution.
-   * Enables Builder mode with Polymarket's Builder Relayer.
+   * V2 builder code (bytes32, e.g. `0x...64hex`). Embedded in every signed
+   * order's `Order.builder` field for on-chain attribution. Falls back to the
+   * `POLY_BUILDER_CODE` env var when omitted.
+   *
+   * Required for any path that places orders post-2026-04-28 cutover.
+   *
+   * NOTE: HMAC builder creds (`{ key, secret, passphrase }`) are NO LONGER
+   * accepted on this config. After the V2 cutover they are only consumed by
+   * `RelayerService` for gasless TX envelopes (Safe deploy / wrap / transfer);
+   * instantiate `RelayerService` directly with `RelayerServiceConfig.builderCreds`
+   * if you need that path.
    */
-  builderCreds?: {
-    key: string;
-    secret: string;
-    passphrase: string;
-  };
+  builderCode?: string;
 
   /**
    * Gnosis Safe address for Builder mode.
-   * When provided with builderCreds, orders use Safe as maker/funder.
+   * When provided with `builderCode`, orders are signed by the EOA owner but
+   * use the Safe as maker/funder (`SignatureTypeV2.POLY_GNOSIS_SAFE`).
    * Derive via RelayerService.getSafeAddress() or deploy via RelayerService.deploySafe().
    */
   safeAddress?: string;
+
+  /**
+   * Enable debug logging for SmartMoneyService (copy trading flow).
+   * When true, prints detailed logs for polling, mempool detection, filters, and order execution.
+   * Default: false.
+   */
+  smartMoneyDebug?: boolean;
+
+  /**
+   * Alias for smartMoneyDebug. Use either smartMoneyDebug or debug.
+   */
+  debug?: boolean;
 }
 
 // K-Line interval types
@@ -462,7 +504,7 @@ export interface DualKLineData {
  * 有效价格（考虑镜像订单）
  *
  * Polymarket 的关键特性：买 YES @ P = 卖 NO @ (1-P)
- * 因此同一订单会在两个订单簿中出现
+ * 因此互补流动性在经济上等价。API 快照不应被假设为逐笔完全镜像。
  *
  * 有效价格是考虑镜像后的最优价格：
  * - effectiveBuyYes = min(YES.ask, 1 - NO.bid)
@@ -515,6 +557,29 @@ export interface ProcessedOrderbook {
     longArbProfit: number;   // 1 - effectiveLongCost，> 0 = 有套利
     shortArbProfit: number;  // effectiveShortRevenue - 1，> 0 = 有套利
 
+    // 可选：扣除估算手续费后的套利结果。只有 fee-aware API 会填充。
+    feeAdjusted?: {
+      size: number;
+      liquidityRole: 'maker' | 'taker';
+      feeRate: number;
+      feeExponent: number;
+      takerOnly: boolean;
+      builderMakerFeeBps: number;
+      builderTakerFeeBps: number;
+      long: {
+        grossProfit: number;
+        totalFees: number;
+        netProfit: number;
+        netProfitPerShare: number;
+      };
+      short: {
+        grossProfit: number;
+        totalFees: number;
+        netProfit: number;
+        netProfitPerShare: number;
+      };
+    };
+
     // 其他指标
     totalBidDepth: number;
     totalAskDepth: number;
@@ -553,12 +618,12 @@ export interface BookUpdate {
 // ===== Market Types =====
 
 /**
- * Token in a market (YES or NO outcome)
+ * Token in a market
  */
 export interface MarketToken {
   /** ERC-1155 token ID */
   tokenId: string;
-  /** Outcome name (e.g., "Yes", "No") */
+  /** Outcome name (e.g., "Yes", "No", "Up", "Down") */
   outcome: string;
   /** Current price (0-1) */
   price: number;
@@ -573,7 +638,8 @@ export interface MarketToken {
  * It combines data from both Gamma API (volume, liquidity) and CLOB API (trading data).
  *
  * BREAKING CHANGE (v2.0): tokens is now an array instead of { yes, no } object.
- * Use tokens.find(t => t.outcome === 'Yes') to get specific outcomes.
+ * For binary markets, use getBinaryTokens(tokens) or tokens[0]/tokens[1]
+ * instead of assuming outcome names are always "Yes"/"No".
  */
 export interface UnifiedMarket {
   /** Market condition ID (primary identifier) */
@@ -585,8 +651,9 @@ export interface UnifiedMarket {
   /** Market description */
   description?: string;
   /**
-   * Market tokens (YES/NO outcomes)
-   * @example tokens.find(t => t.outcome === 'Yes')?.price
+   * Market tokens.
+   * For binary markets, tokens[0] is the primary outcome and tokens[1] is the secondary outcome.
+   * @example getBinaryTokens(market.tokens)?.primary.price
    */
   tokens: MarketToken[];
   /** Total volume (USDC) */
@@ -625,7 +692,7 @@ export interface UnifiedMarket {
  * - Heads/Tails (coin flips)
  *
  * Using index-based access (tokens[0], tokens[1]) is more reliable
- * than name-based access (outcome === 'Yes').
+ * than name-based access using outcome strings.
  */
 export interface BinaryTokens {
   /** First outcome token (Yes/Up/Team1...) - corresponds to tokens[0] */
@@ -655,7 +722,7 @@ export interface BinaryTokens {
  * ```
  */
 export function getBinaryTokens(tokens: MarketToken[]): BinaryTokens | null {
-  if (!tokens || tokens.length < 2) return null;
+  if (!tokens || tokens.length !== 2) return null;
   return {
     primary: tokens[0],
     secondary: tokens[1],

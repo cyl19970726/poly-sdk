@@ -13,8 +13,14 @@ import {
   calculateSharesForAmount,
   calculateSpread,
   calculateMidpoint,
+  calculatePlatformFee,
+  calculateBuilderFee,
+  estimateOrderFees,
+  estimateBinaryArbitrageFees,
+  estimateMultiLegArbitrageFees,
   getEffectivePrices,
   checkArbitrage,
+  checkArbitrageWithFees,
   formatPrice,
   formatUSDC,
   calculatePnL,
@@ -112,6 +118,140 @@ describe('Price Utilities', () => {
     });
   });
 
+  describe('fee estimation', () => {
+    it('calculates taker platform fees with the official symmetric curve', () => {
+      // 100 shares at 50c with a 0.03 rate: 100 * 0.03 * 0.5 * 0.5 = 0.75
+      expect(calculatePlatformFee(0.5, 100, { rate: 0.03 })).toBe(0.75);
+
+      // Symmetric around 50c.
+      expect(calculatePlatformFee(0.3, 100, { rate: 0.03 })).toBe(
+        calculatePlatformFee(0.7, 100, { rate: 0.03 })
+      );
+    });
+
+    it('does not charge taker-only platform fees to maker fills', () => {
+      expect(calculatePlatformFee(0.5, 100, { rate: 0.03, takerOnly: true }, 'maker')).toBe(0);
+    });
+
+    it('supports non-default fee exponent from CLOB market info', () => {
+      // With exponent=2, uncertainty is squared before applying the rate.
+      expect(calculatePlatformFee(0.5, 100, { rate: 0.03, exponent: 2 })).toBe(0.1875);
+    });
+
+    it('rounds fees to five decimals and drops below the minimum charged fee', () => {
+      expect(calculatePlatformFee(0.333333, 1, { rate: 0.03 })).toBe(0.00667);
+      expect(calculatePlatformFee(0.001, 0.1, { rate: 0.03 })).toBe(0);
+    });
+
+    it('calculates additive builder fees from notional bps', () => {
+      expect(calculateBuilderFee(100, { takerBps: 25 }, 'taker')).toBe(0.25);
+      expect(calculateBuilderFee(100, { makerBps: 10 }, 'maker')).toBe(0.1);
+    });
+
+    it('returns BUY total cost and SELL net proceeds after fees', () => {
+      const buy = estimateOrderFees({ side: 'BUY', price: 0.5, size: 100, rate: 0.03 });
+      expect(buy.notional).toBe(50);
+      expect(buy.platformFee).toBe(0.75);
+      expect(buy.totalCost).toBe(50.75);
+      expect(buy.netProceeds).toBe(0);
+
+      const sell = estimateOrderFees({ side: 'SELL', price: 0.5, size: 100, rate: 0.03 });
+      expect(sell.notional).toBe(50);
+      expect(sell.platformFee).toBe(0.75);
+      expect(sell.totalCost).toBe(0);
+      expect(sell.netProceeds).toBe(49.25);
+    });
+
+    it('shows the live France one-tick round trip is dominated by fees', () => {
+      const roundTripFees = estimateOrderFees({ side: 'BUY', price: 0.197, size: 6, rate: 0.03 }).totalFee
+        + estimateOrderFees({ side: 'SELL', price: 0.196, size: 6, rate: 0.03 }).totalFee;
+      expect(roundTripFees).toBeCloseTo(0.05684, 5);
+
+      const spreadLoss = (0.197 - 0.196) * 6;
+      expect(spreadLoss + roundTripFees).toBeCloseTo(0.06284, 5);
+    });
+
+    it('estimates net binary arbitrage after fees', () => {
+      const estimate = estimateBinaryArbitrageFees({
+        type: 'long',
+        size: 10,
+        yesPrice: 0.49,
+        noPrice: 0.49,
+        rate: 0.03,
+      });
+
+      expect(estimate.grossProfit).toBeCloseTo(0.2, 10);
+      expect(estimate.totalFees).toBeCloseTo(0.14994, 5);
+      expect(estimate.netProfit).toBeCloseTo(0.05006, 5);
+    });
+
+    it('includes builder fees in binary arbitrage net profit', () => {
+      const estimate = estimateBinaryArbitrageFees({
+        type: 'long',
+        size: 10,
+        yesPrice: 0.49,
+        noPrice: 0.49,
+        rate: 0.03,
+        takerBps: 25,
+      });
+
+      // Builder fee: (0.49 * 10 * 25 / 10000) * 2 = 0.0245
+      expect(estimate.totalFees).toBeCloseTo(0.17444, 5);
+      expect(estimate.netProfit).toBeCloseTo(0.02556, 5);
+    });
+
+    it('estimates short arbitrage sell proceeds after fees', () => {
+      const estimate = estimateBinaryArbitrageFees({
+        type: 'short',
+        size: 10,
+        yesPrice: 0.51,
+        noPrice: 0.51,
+        rate: 0.03,
+      });
+
+      expect(estimate.grossProfit).toBeCloseTo(0.2, 10);
+      expect(estimate.legs.yes.netProceeds).toBeCloseTo(5.02503, 5);
+      expect(estimate.legs.no.netProceeds).toBeCloseTo(5.02503, 5);
+      expect(estimate.netProfit).toBeCloseTo(0.05006, 5);
+    });
+
+    it('aggregates multi-leg fees with per-leg market configs', () => {
+      const estimate = estimateMultiLegArbitrageFees({
+        type: 'long',
+        size: 10,
+        legs: [
+          { label: 'A', price: 0.25, rate: 0.03 },
+          { label: 'B', price: 0.35, rate: 0.03 },
+          { label: 'Any Other Score', price: 0.38, rate: 0.06 },
+        ],
+      });
+
+      expect(estimate.priceSum).toBeCloseTo(0.98, 10);
+      expect(estimate.grossProfit).toBeCloseTo(0.2, 10);
+      expect(estimate.legs[2]?.estimate.platformFee).toBeCloseTo(0.14136, 5);
+      expect(estimate.totalFees).toBeCloseTo(0.26586, 5);
+      expect(estimate.netProfit).toBeCloseTo(-0.06586, 5);
+    });
+
+    it('supports short multi-leg fee estimates', () => {
+      const estimate = estimateMultiLegArbitrageFees({
+        type: 'short',
+        size: 10,
+        legs: [
+          { label: 'A', price: 0.36, rate: 0.03 },
+          { label: 'B', price: 0.36, rate: 0.03 },
+          { label: 'Other', price: 0.36, rate: 0.03 },
+        ],
+      });
+
+      expect(estimate.priceSum).toBeCloseTo(1.08, 10);
+      expect(estimate.grossProfit).toBeCloseTo(0.8, 10);
+      expect(estimate.totalFees).toBeCloseTo(0.20736, 5);
+      expect(estimate.netProfit).toBeCloseTo(0.59264, 5);
+      expect(estimate.legs[0]?.estimate.side).toBe('SELL');
+    });
+  });
+
   describe('calculateSharesForAmount', () => {
     it('should calculate shares correctly', () => {
       expect(calculateSharesForAmount(10, 0.5)).toBe(20);
@@ -191,6 +331,28 @@ describe('Price Utilities', () => {
       // Normal spread, no arbitrage
       const result = checkArbitrage(0.55, 0.45, 0.55, 0.45);
       expect(result).toBeNull();
+    });
+
+    it('can reject a gross opportunity after estimated fees', () => {
+      const gross = checkArbitrage(0.495, 0.495, 0.48, 0.48);
+      expect(gross?.profit).toBeCloseTo(0.01, 10);
+
+      const net = checkArbitrageWithFees(0.495, 0.495, 0.48, 0.48, {
+        size: 10,
+        rate: 0.03,
+      });
+      expect(net).toBeNull();
+    });
+
+    it('keeps long priority when both net paths survive fees', () => {
+      const result = checkArbitrageWithFees(0.53, 0.53, 0.52, 0.52, {
+        size: 10,
+        rate: 0.003,
+      });
+
+      expect(result?.type).toBe('long');
+      expect(result?.grossProfit).toBeCloseTo(0.4, 10);
+      expect(result?.netProfit).toBeGreaterThan(0.38);
     });
   });
 

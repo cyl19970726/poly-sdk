@@ -26,7 +26,7 @@
  * 余额要求：~$6 USDC.e（4 个场景 × $1.5）
  */
 
-import { ClobClient, Chain } from '@polymarket/clob-client';
+import { ClobClient, Chain } from '@polymarket/clob-client-v2';
 import { Wallet } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -237,7 +237,8 @@ async function main() {
 
   // Get token info from CLOB API
   const wallet = new Wallet(PRIVATE_KEY);
-  const clobClient = new ClobClient(CLOB_HOST, Chain.POLYGON, wallet);
+  // V2 SDK: options-bag constructor; `chain` replaces V1 `chainId`.
+  const clobClient = new ClobClient({ host: CLOB_HOST, chain: Chain.POLYGON, signer: wallet });
   const clobMarket = await clobClient.getMarket(testMarket.conditionId);
 
   if (!clobMarket?.tokens || clobMarket.tokens.length < 2) {

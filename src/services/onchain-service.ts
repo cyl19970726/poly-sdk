@@ -24,7 +24,7 @@
  *   await onchain.approveAll();
  * }
  *
- * // Execute CTF operations
+ * // Execute CTF operations (V2 collateral: pUSD)
  * await onchain.split(conditionId, '100');
  * await onchain.merge(conditionId, '100');
  *
@@ -85,6 +85,7 @@ export interface OnchainServiceConfig {
 
 export interface ReadyStatus {
   ready: boolean;
+  pusdBalance: string;
   usdcEBalance: string;
   nativeUsdcBalance: string;
   maticBalance: string;
@@ -230,7 +231,8 @@ export class OnchainService {
   }
 
   /**
-   * Approve USDC spending for a specific contract
+   * Approve pUSD spending for a specific contract by default.
+   * Pass token options through AuthorizationService directly for USDC.e onramp approvals.
    */
   async approveUsdc(
     spenderAddress: string,
@@ -252,10 +254,10 @@ export class OnchainService {
   // ===== CTF Operations =====
 
   /**
-   * Split USDC into YES + NO tokens
+   * Split pUSD into YES + NO tokens
    *
    * @param conditionId - Market condition ID
-   * @param amount - USDC amount (e.g., "100" for 100 USDC)
+   * @param amount - pUSD amount (e.g., "100" for 100 pUSD)
    * @returns SplitResult with transaction details
    */
   async split(conditionId: string, amount: string): Promise<SplitResult> {
@@ -263,7 +265,7 @@ export class OnchainService {
   }
 
   /**
-   * Split USDC into YES + NO tokens using explicit token IDs
+   * Split pUSD into YES + NO tokens using explicit token IDs
    *
    * Supports both standard CTF and NegRisk markets.
    * For NegRisk: uses NegRisk Adapter (set isNegRisk=true).
@@ -278,7 +280,7 @@ export class OnchainService {
   }
 
   /**
-   * Merge YES + NO tokens back to USDC
+   * Merge YES + NO tokens back to pUSD
    *
    * @param conditionId - Market condition ID
    * @param amount - Number of token pairs to merge
@@ -337,14 +339,30 @@ export class OnchainService {
   // ===== Balances =====
 
   /**
-   * Get USDC.e (bridged USDC) balance - the token used by Polymarket CTF
+   * Get pUSD balance.
+   */
+  async getPusdBalance(): Promise<string> {
+    return this.ctfClient.getPusdBalance();
+  }
+
+  /**
+   * Backwards-compatible alias for pUSD balance.
+   *
+   * @deprecated Use getPusdBalance(). In CLOB V2 this returns pUSD, not USDC.e.
    */
   async getUsdcBalance(): Promise<string> {
     return this.ctfClient.getUsdcBalance();
   }
 
   /**
-   * Get native USDC balance (not compatible with CTF)
+   * Get USDC.e balance (onramp/offramp rail).
+   */
+  async getUsdcEBalance(): Promise<string> {
+    return this.ctfClient.getUsdcEBalance();
+  }
+
+  /**
+   * Get native USDC balance (deposit/bridge input, not CTF collateral)
    */
   async getNativeUsdcBalance(): Promise<string> {
     return this.ctfClient.getNativeUsdcBalance();
@@ -393,6 +411,7 @@ export class OnchainService {
 
     return {
       ready: ctfStatus.ready && authStatus.tradingReady,
+      pusdBalance: ctfStatus.pusdBalance,
       usdcEBalance: ctfStatus.usdcEBalance,
       nativeUsdcBalance: ctfStatus.nativeUsdcBalance,
       maticBalance: ctfStatus.maticBalance,
@@ -421,7 +440,7 @@ export class OnchainService {
   }
 
   /**
-   * Check if wallet has sufficient USDC for split
+   * Check if wallet has sufficient pUSD for split
    */
   async canSplit(amount: string): Promise<{ canSplit: boolean; reason?: string }> {
     return this.ctfClient.canSplit(amount);
@@ -506,10 +525,10 @@ export class OnchainService {
   }
 
   /**
-   * Swap any supported token to USDC.e and deposit to Polymarket
+   * Swap any supported token to USDC.e as an onramp rail
    *
-   * This is a convenience method for converting tokens to the USDC.e
-   * format required by Polymarket CTF operations.
+   * CLOB V2 trading still requires pUSD; wrap USDC.e through the Collateral
+   * Onramp before split/merge/redeem or order settlement.
    */
   async swapAndDeposit(
     token: string,
@@ -555,8 +574,8 @@ export class OnchainService {
   /**
    * Transfer native USDC to another address
    *
-   * WARNING: This transfers NATIVE USDC, not USDC.e.
-   * For Polymarket CTF operations, use transferUsdcE() instead.
+   * WARNING: This transfers NATIVE USDC, not pUSD.
+   * Native USDC is a deposit/bridge input, not direct V2 CTF collateral.
    */
   async transferUsdc(to: string, amount: string): Promise<TransferResult> {
     return this.swapService.transferUsdc(to, amount);
@@ -565,7 +584,7 @@ export class OnchainService {
   /**
    * Transfer USDC.e (bridged USDC) to another address
    *
-   * This is the correct method for Polymarket CTF operations.
+   * USDC.e is an onramp/offramp rail. Wrap to pUSD before V2 trading.
    */
   async transferUsdcE(to: string, amount: string): Promise<TransferResult> {
     return this.swapService.transferUsdcE(to, amount);

@@ -9,7 +9,7 @@
  * Run: npx ts-node examples/03-market-analysis.ts
  */
 
-import { PolymarketSDK } from '../src/index.js';
+import { PolymarketSDK, getBinaryTokens } from '../src/index.js';
 
 async function main() {
   console.log('=== Market Analysis & Arbitrage Detection ===\n');
@@ -32,11 +32,8 @@ async function main() {
 
       // Get unified market for token IDs
       const unifiedMarket = await sdk.getMarket(market.conditionId);
-
-      const yesToken = unifiedMarket.tokens.find(t => t.outcome === 'Yes');
-      const noToken = unifiedMarket.tokens.find(t => t.outcome === 'No');
-      if (!yesToken?.tokenId || !noToken?.tokenId) {
-        console.log('     Skipping (missing token IDs)\n');
+      if (!getBinaryTokens(unifiedMarket.tokens)) {
+        console.log('     Skipping (market is not binary)\n');
         continue;
       }
 

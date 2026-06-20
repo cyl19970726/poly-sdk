@@ -82,11 +82,10 @@ async function findActive15mMarket(coin: string): Promise<{
   for (const market of results) {
     // Check if it's a 15-minute Up/Down market
     const is15m = market.question?.includes('15') || market.slug?.includes('15');
-    const isUpDown = market.tokens?.some(t => t.outcome === 'Up' || t.outcome === 'Down');
+    const isUpDown = market.tokens?.some((t: { outcome: string }) => t.outcome === 'Up' || t.outcome === 'Down');
 
     if (is15m && isUpDown && market.tokens?.length >= 2) {
-      const upToken = market.tokens.find(t => t.outcome === 'Up');
-      const downToken = market.tokens.find(t => t.outcome === 'Down');
+      const [upToken, downToken] = market.tokens;
 
       if (upToken && downToken) {
         return {

@@ -1,0 +1,7 @@
+{
+  "key": "YOUR_API_KEY_HERE",
+  "secret": "YOUR_API_SECRET_HERE",
+  "passphrase": "YOUR_API_PASSPHRASE_HERE",
+  "walletAddress": "0xYOUR_WALLET_ADDRESS_HERE",
+  "derivedAt": "1970-01-01T00:00:00.000Z"
+}

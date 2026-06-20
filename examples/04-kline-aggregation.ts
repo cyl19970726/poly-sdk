@@ -4,12 +4,18 @@
  * This example demonstrates:
  * - Getting trade history for a market
  * - Aggregating trades into K-Line (OHLCV) candles
- * - Calculating dual-token K-Lines (YES + NO)
+ * - Calculating dual-token K-Lines for binary markets
  *
  * Run: npx ts-node examples/04-kline-aggregation.ts
  */
 
-import { PolymarketSDK, type Trade, type KLineInterval, getIntervalMs } from '../src/index.js';
+import {
+  PolymarketSDK,
+  type Trade,
+  type KLineInterval,
+  getIntervalMs,
+  getBinaryTokens,
+} from '../src/index.js';
 
 interface KLineCandle {
   timestamp: number;
@@ -94,15 +100,23 @@ async function main() {
   // 3. Get token info
   console.log('3. Getting token info...');
   const unifiedMarket = await sdk.getMarket(market.conditionId);
-  const yesToken = unifiedMarket.tokens.find(t => t.outcome === 'Yes');
-  const noToken = unifiedMarket.tokens.find(t => t.outcome === 'No');
-  console.log(`   YES Token: ${yesToken?.tokenId.slice(0, 16)}...`);
-  console.log(`   NO Token: ${noToken?.tokenId.slice(0, 16)}...\n`);
+  const binary = getBinaryTokens(unifiedMarket.tokens);
+  if (!binary) {
+    console.log('Selected market is not binary');
+    return;
+  }
+  const [yesOutcome, noOutcome] = binary.outcomes;
+  const yesToken = binary.primary;
+  const noToken = binary.secondary;
+  console.log(`   YES Token (${yesOutcome}): ${yesToken.tokenId.slice(0, 16)}...`);
+  console.log(`   NO Token (${noOutcome}): ${noToken.tokenId.slice(0, 16)}...\n`);
 
-  // 4. Separate trades by token (YES vs NO)
-  const yesTrades = trades.filter((t) => t.outcomeIndex === 0 || t.outcome === 'Yes');
-  const noTrades = trades.filter((t) => t.outcomeIndex === 1 || t.outcome === 'No');
-  console.log(`4. Separated trades: YES=${yesTrades.length}, NO=${noTrades.length}\n`);
+  // 4. Separate trades by outcome index (primary vs secondary)
+  const yesTrades = trades.filter((t) => t.outcomeIndex === 0);
+  const noTrades = trades.filter((t) => t.outcomeIndex === 1);
+  console.log(
+    `4. Separated trades: YES/${yesOutcome}=${yesTrades.length}, NO/${noOutcome}=${noTrades.length}\n`
+  );
 
   // 5. Aggregate into 1-hour candles
   const interval: KLineInterval = '1h';
@@ -111,7 +125,7 @@ async function main() {
   const yesCandles = aggregateToKLines(yesTrades, interval);
   const noCandles = aggregateToKLines(noTrades, interval);
 
-  console.log(`   YES Token K-Lines (${yesCandles.length} candles):`);
+  console.log(`   YES Token K-Lines (${yesOutcome}, ${yesCandles.length} candles):`);
   for (const candle of yesCandles.slice(-5)) {
     const date = new Date(candle.timestamp).toLocaleString();
     console.log(
@@ -119,7 +133,7 @@ async function main() {
     );
   }
 
-  console.log(`\n   NO Token K-Lines (${noCandles.length} candles):`);
+  console.log(`\n   NO Token K-Lines (${noOutcome}, ${noCandles.length} candles):`);
   for (const candle of noCandles.slice(-5)) {
     const date = new Date(candle.timestamp).toLocaleString();
     console.log(
@@ -128,7 +142,7 @@ async function main() {
   }
 
   // 6. Calculate spread over time
-  console.log('\n6. Spread Analysis (YES_price + NO_price):\n');
+  console.log(`\n6. Spread Analysis (YES/${yesOutcome}_price + NO/${noOutcome}_price):\n`);
 
   // Find matching timestamps
   const yesMap = new Map(yesCandles.map((c) => [c.timestamp, c]));
@@ -150,7 +164,7 @@ async function main() {
     const arbOpportunity = spread < 1 ? 'LONG ARB' : spread > 1 ? 'SHORT ARB' : '';
 
     console.log(
-      `   [${date}] YES:${lastYes.toFixed(3)} + NO:${lastNo.toFixed(3)} = ${spread.toFixed(4)} ${arbOpportunity}`
+      `   [${date}] YES/${yesOutcome}:${lastYes.toFixed(3)} + NO/${noOutcome}:${lastNo.toFixed(3)} = ${spread.toFixed(4)} ${arbOpportunity}`
     );
   }
 

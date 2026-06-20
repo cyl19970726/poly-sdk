@@ -21,6 +21,12 @@ const envPath = path.resolve(__dirname, '../../earning-engine/dashboard-api/.env
 const envContent = fs.readFileSync(envPath, 'utf8');
 const match = envContent.match(/^PRIVATE_KEY=(.+)$/m);
 const PRIVATE_KEY = process.env.POLY_PRIVKEY || (match ? match[1].trim() : '');
+const SIGNATURE_TYPE = Number(
+  process.env.POLY_SIGNATURE_TYPE ||
+  process.env.POLYMARKET_SIGNATURE_TYPE ||
+  '0'
+) as 0 | 1 | 2;
+const FUNDER_ADDRESS = process.env.POLY_FUNDER || process.env.POLYMARKET_FUNDER || '';
 
 // 使用一个活跃的市场进行测试 - NVIDIA market cap
 const TEST_MARKET = {
@@ -38,6 +44,11 @@ async function main() {
     process.exit(1);
   }
 
+  if (SIGNATURE_TYPE === 1 && !FUNDER_ADDRESS) {
+    console.error('Error: signatureType=1 requires POLY_FUNDER or POLYMARKET_FUNDER');
+    process.exit(1);
+  }
+
   console.log('╔════════════════════════════════════════════════════════════════╗');
   console.log('║       ORDER TYPE TEST - GTC vs FOK                              ║');
   console.log('╚════════════════════════════════════════════════════════════════╝');
@@ -51,6 +62,8 @@ async function main() {
   const tradingService = new TradingService(rateLimiter, cache, {
     privateKey: PRIVATE_KEY,
     chainId: 137,
+    signatureType: SIGNATURE_TYPE,
+    funderAddress: FUNDER_ADDRESS || undefined,
   });
 
   await tradingService.initialize();

@@ -25,9 +25,12 @@
 
 | 陷阱 | 问题 | 解决方案 |
 |------|------|----------|
-| **USDC 类型** | 用原生 USDC 进行 CTF 操作失败 | CTF 只接受 USDC.e (0x2791...) |
-| **Token ID** | 用标准 CTF 公式计算 Position ID | 必须从 CLOB API 获取 tokenId |
+| **抵押品类型** | 用 USDC.e / 原生 USDC 直接做 V2 CTF 操作失败 | V2 交易抵押品是 pUSD；USDC.e/native USDC 先走 onramp/deposit |
+| **Token ID** | 手算 Position ID 输入容易错 | tokenId/assetId/positionId 语义统一，但工程上优先从 Gamma/CLOB API 获取 |
 | **订单簿镜像** | YES.ask + NO.ask = ~2.0 | 使用有效价格计算 |
+| **Top-of-book 套利** | 只看最优一档会高估利润 | 按目标规模逐档计算 VWAP |
+| **费用 / gross profit** | `longArbProfit > 0` 仍可能亏钱 | 用 fee-aware API 扣除 CLOB taker fee 和 builder fee |
+| **NegRisk 泛化** | 把所有多候选页面都当成 ΣYES≈1 | 确认 negRisk、同一事件、互斥且穷尽 |
 | **Outcome 名称** | 硬编码 "YES"/"NO" | 动态获取（可能是 "Up"/"Down"） |
 | **Redeem 方法** | `redeem()` 找不到余额 | 使用 `redeemByTokenIds()` |
 
@@ -48,6 +51,7 @@
 | [api/01-overview.md](api/01-overview.md) | Complete API reference |
 | [api/02-leaderboard.md](api/02-leaderboard.md) | Leaderboard API |
 | [api/03-position-activity.md](api/03-position-activity.md) | Position and activity tracking API |
+| [api/04-fees.md](api/04-fees.md) | Fee estimation and net-profit APIs |
 
 ### For Developers - Practical Guides
 

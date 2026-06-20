@@ -14,7 +14,7 @@
  */
 
 import { RealtimeServiceV2, UserOrder, UserTrade } from '../src/services/realtime-service-v2.js';
-import { ClobClient } from '@polymarket/clob-client';
+import { ClobClient } from '@polymarket/clob-client-v2';
 import { Wallet } from 'ethers';
 
 // Event tracking
@@ -97,11 +97,11 @@ async function main() {
   // Create CLOB API credentials
   console.log('\n🔐 Creating CLOB API credentials...');
 
-  const clobClient = new ClobClient(
-    'https://clob.polymarket.com',
-    137, // Polygon mainnet
-    wallet
-  );
+  const clobClient = new ClobClient({
+    host: 'https://clob.polymarket.com',
+    chain: 137, // Polygon mainnet
+    signer: wallet,
+  });
 
   // Derive API credentials
   const creds = await clobClient.createOrDeriveApiCreds();

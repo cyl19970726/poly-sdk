@@ -64,7 +64,7 @@ stateDiagram-v2
 **Actions**:
 1. Validate order parameters
    - Minimum size: 5 shares
-   - Minimum value: $1 USDC
+   - Minimum value: $1 pUSD notional
    - Price within tick size
    - Valid expiration (for GTD orders)
 2. Generate signed order locally

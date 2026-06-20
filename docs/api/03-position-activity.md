@@ -216,7 +216,7 @@ GET /activity
 **type 选项**:
 - `TRADE` - 交易
 - `SPLIT` - 拆分 (USDC → YES + NO)
-- `MERGE` - 合并 (YES + NO → USDC)
+- `MERGE` - 合并 (YES + NO → pUSD)
 - `REDEEM` - 赎回 (结算后)
 - `REWARD` - 奖励
 - `CONVERSION` - 转换

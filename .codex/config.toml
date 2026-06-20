@@ -1,0 +1,6 @@
+[mcp_servers.polymarket]
+command = "node"
+args = ["/path/to/poly-mcp/dist/server.js"]
+
+[mcp_servers.polymarket.env]
+POLY_PRIVATE_KEY = "0xYOUR_PRIVATE_KEY_HERE"

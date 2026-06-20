@@ -1,25 +1,33 @@
 /**
  * Authorization Service
  *
- * Manages ERC20 and ERC1155 approvals required for trading on Polymarket.
+ * Manages ERC20 and ERC1155 approvals required for trading on Polymarket V2.
  *
- * Required approvals for trading:
- * - ERC20 (USDC): Approve USDC spending for CTF Exchange, Neg Risk Exchange, etc.
- * - ERC1155 (Conditional Tokens): Approve operators for conditional token transfers
+ * V2 collateral model (post-2026-04-28 cutover):
+ *   - Trading collateral is pUSD (not USDC.e). pUSD is approved to the V2
+ *     CTF Exchange + V2 NegRisk Exchange + NegRisk Adapter.
+ *   - USDC.e remains relevant ONLY as the "off-exchange" rail:
+ *       USDC.e --(approve Onramp)--> wrap() --> pUSD
+ *     The USDC.e approval target is therefore the Collateral Onramp, NOT any
+ *     V2 Exchange. This service emits separate approval rows for the two
+ *     tokens.
+ *   - ERC1155 (Conditional Tokens) operators are the V2 Exchanges + the
+ *     NegRisk Adapter, all unchanged in spirit but pointing at V2 addresses.
  *
- * @see https://docs.polymarket.com/
+ * V1 approvals on V1 Exchanges are NOT revoked by this service — they are
+ * harmless on the V2 rail (V1 Exchange contracts no longer accept orders).
+ * Callers wanting to revoke can do so manually; default `approveAll()` only
+ * sets the V2 approval matrix.
+ *
+ * @see https://docs.polymarket.com/v2-migration
+ * @see ../constants/v2-contracts.ts (V2 contract SSOT)
  */
 
 import { ethers } from 'ethers';
-import {
-  CTF_CONTRACT,
-  NEG_RISK_CTF_EXCHANGE,
-  NEG_RISK_ADAPTER,
-  USDC_CONTRACT,
-} from '../clients/ctf-client.js';
+import { CTF_CONTRACT } from '../clients/ctf-client.js';
+import { POLYGON_CONTRACTS_V2 } from '../constants/v2-contracts.js';
 
-// Contract addresses
-const CTF_EXCHANGE = '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E';
+// Conditional Tokens ERC1155 (UNCHANGED across V1/V2).
 const CONDITIONAL_TOKENS = CTF_CONTRACT;
 
 // ABIs
@@ -40,11 +48,16 @@ export interface AllowanceInfo {
   address: string;
   approved: boolean;
   allowance?: string;
+  /** ERC20 only: which token's allowance this row reports (`pUSD` vs `USDC.e`). */
+  token?: 'pUSD' | 'USDC.e';
 }
 
 export interface AllowancesResult {
   wallet: string;
-  usdcBalance: string;
+  /** Wallet's pUSD balance (V2 trading collateral). */
+  pusdBalance: string;
+  /** Wallet's USDC.e balance (off-exchange rail). */
+  usdcEBalance: string;
   erc20Allowances: AllowanceInfo[];
   erc1155Approvals: AllowanceInfo[];
   tradingReady: boolean;
@@ -56,6 +69,8 @@ export interface ApprovalTxResult {
   txHash?: string;
   success: boolean;
   error?: string;
+  /** ERC20 only: which token's allowance was set in this row. */
+  token?: 'pUSD' | 'USDC.e';
 }
 
 export interface ApprovalsResult {
@@ -70,19 +85,45 @@ export interface AuthorizationServiceConfig {
   provider?: ethers.providers.Provider;
 }
 
-// Contracts that need ERC20 approval
-const ERC20_SPENDERS = [
-  { name: 'CTF Exchange', address: CTF_EXCHANGE },
-  { name: 'Neg Risk CTF Exchange', address: NEG_RISK_CTF_EXCHANGE },
-  { name: 'Neg Risk Adapter', address: NEG_RISK_ADAPTER },
-  { name: 'Conditional Tokens', address: CONDITIONAL_TOKENS },
+/**
+ * V2 ERC20 spender matrix.
+ *
+ * Two distinct token rails:
+ *   - `pUSD` rows: trading collateral; approved to V2 Exchanges + Adapter so
+ *     the matchOrders flow can pull pUSD from the maker/taker.
+ *   - `USDC.e` row: NOT trading collateral on V2; the approval is to the
+ *     Collateral Onramp so `wrap(USDC.e → pUSD)` can pull USDC.e from the
+ *     wallet and mint pUSD to the same address.
+ *
+ * The optional `token` field disambiguates which ERC20 contract this row
+ * targets. Older callers that ignore the field default to pUSD-correct
+ * behaviour because all four V2 trading rows are pUSD.
+ */
+interface V2Erc20Spender {
+  name: string;
+  address: string;
+  token: 'pUSD' | 'USDC.e';
+}
+
+const ERC20_SPENDERS_V2: readonly V2Erc20Spender[] = [
+  { name: 'V2 CTF Exchange',         address: POLYGON_CONTRACTS_V2.ctfExchange,      token: 'pUSD' },
+  { name: 'V2 NegRisk CTF Exchange', address: POLYGON_CONTRACTS_V2.negRiskExchange,  token: 'pUSD' },
+  { name: 'NegRisk Adapter',         address: POLYGON_CONTRACTS_V2.negRiskAdapter,   token: 'pUSD' },
+  { name: 'Onramp (USDC.e wrap)',    address: POLYGON_CONTRACTS_V2.collateralOnramp, token: 'USDC.e' },
 ];
 
-// Operators that need ERC1155 approval
-const ERC1155_OPERATORS = [
-  { name: 'CTF Exchange', address: CTF_EXCHANGE },
-  { name: 'Neg Risk CTF Exchange', address: NEG_RISK_CTF_EXCHANGE },
-  { name: 'Neg Risk Adapter', address: NEG_RISK_ADAPTER },
+/**
+ * V2 ERC1155 operator list — operators that may transfer the wallet's
+ * Conditional Token balances during order matching / NegRisk redemption.
+ *
+ * The NegRisk Adapter is retained as a separate operator: the V2 NegRisk
+ * Exchange relies on the Adapter for split/merge during multi-outcome
+ * resolution and the Adapter must be able to move the wallet's CTF tokens.
+ */
+const ERC1155_OPERATORS_V2 = [
+  { name: 'V2 CTF Exchange',         address: POLYGON_CONTRACTS_V2.ctfExchange },
+  { name: 'V2 NegRisk CTF Exchange', address: POLYGON_CONTRACTS_V2.negRiskExchange },
+  { name: 'NegRisk Adapter',         address: POLYGON_CONTRACTS_V2.negRiskAdapter },
 ];
 
 /**
@@ -121,24 +162,45 @@ export class AuthorizationService {
   }
 
   /**
-   * Check all ERC20 and ERC1155 allowances required for trading
+   * Resolve the ERC20 token contract address for a V2 spender row.
+   *
+   * pUSD rows trade through the V2 Exchanges; USDC.e rows feed the Onramp.
+   * Centralised so future V2 token additions only edit one place.
+   */
+  private erc20ContractForToken(token: 'pUSD' | 'USDC.e'): string {
+    return token === 'pUSD'
+      ? POLYGON_CONTRACTS_V2.pUSD
+      : POLYGON_CONTRACTS_V2.usdcE;
+  }
+
+  /**
+   * Check all V2 ERC20 and ERC1155 allowances required for trading.
+   *
+   * Reads pUSD balance + per-spender allowances on both pUSD and USDC.e, and
+   * ERC1155 approvals on Conditional Tokens for the V2 operator set.
    *
    * @returns Status of all allowances and whether trading is ready
    */
   async checkAllowances(): Promise<AllowancesResult> {
     const walletAddress = this.signer.address;
 
-    const usdc = new ethers.Contract(USDC_CONTRACT, ERC20_ABI, this.provider);
+    const pusd = new ethers.Contract(POLYGON_CONTRACTS_V2.pUSD, ERC20_ABI, this.provider);
+    const usdcE = new ethers.Contract(POLYGON_CONTRACTS_V2.usdcE, ERC20_ABI, this.provider);
     const conditionalTokens = new ethers.Contract(CONDITIONAL_TOKENS, ERC1155_ABI, this.provider);
 
-    // Check USDC balance
-    const balance = await usdc.balanceOf(walletAddress);
-    const balanceFormatted = ethers.utils.formatUnits(balance, 6);
+    // Balances
+    const [pusdBal, usdcEBal] = await Promise.all([
+      pusd.balanceOf(walletAddress),
+      usdcE.balanceOf(walletAddress),
+    ]);
+    const pusdBalance = ethers.utils.formatUnits(pusdBal, 6);
+    const usdcEBalance = ethers.utils.formatUnits(usdcEBal, 6);
 
-    // Check ERC20 allowances
+    // Check ERC20 allowances per V2 spender row (token-specific)
     const erc20Allowances: AllowanceInfo[] = [];
-    for (const spender of ERC20_SPENDERS) {
-      const allowance = await usdc.allowance(walletAddress, spender.address);
+    for (const spender of ERC20_SPENDERS_V2) {
+      const tokenContract = spender.token === 'pUSD' ? pusd : usdcE;
+      const allowance = await tokenContract.allowance(walletAddress, spender.address);
       const allowanceNum = parseFloat(ethers.utils.formatUnits(allowance, 6));
       const isUnlimited = allowanceNum > 1e12;
 
@@ -147,12 +209,13 @@ export class AuthorizationService {
         address: spender.address,
         approved: isUnlimited,
         allowance: isUnlimited ? 'unlimited' : allowanceNum.toFixed(2),
+        token: spender.token,
       });
     }
 
     // Check ERC1155 approvals
     const erc1155Approvals: AllowanceInfo[] = [];
-    for (const operator of ERC1155_OPERATORS) {
+    for (const operator of ERC1155_OPERATORS_V2) {
       const isApproved = await conditionalTokens.isApprovedForAll(walletAddress, operator.address);
 
       erc1155Approvals.push({
@@ -166,7 +229,7 @@ export class AuthorizationService {
     const issues: string[] = [];
     for (const a of erc20Allowances) {
       if (!a.approved) {
-        issues.push(`ERC20: ${a.contract} needs USDC approval`);
+        issues.push(`ERC20 ${a.token ?? 'pUSD'}: ${a.contract} needs approval`);
       }
     }
     for (const a of erc1155Approvals) {
@@ -179,7 +242,8 @@ export class AuthorizationService {
 
     return {
       wallet: walletAddress,
-      usdcBalance: balanceFormatted,
+      pusdBalance,
+      usdcEBalance,
       erc20Allowances,
       erc1155Approvals,
       tradingReady,
@@ -188,49 +252,61 @@ export class AuthorizationService {
   }
 
   /**
-   * Set up all required approvals for trading
+   * Set up all required V2 approvals for trading.
+   *
+   * - 3 pUSD approvals (to V2 CTF Exchange / V2 NegRisk Exchange / NegRisk Adapter)
+   * - 1 USDC.e approval (to Collateral Onramp, for `wrap()`)
+   * - 3 ERC1155 approvals (V2 Exchanges + Adapter as Conditional Tokens operators)
    *
    * @returns Results of all approval transactions
    */
   async approveAll(): Promise<ApprovalsResult> {
     const walletAddress = this.signer.address;
 
-    const usdc = new ethers.Contract(USDC_CONTRACT, ERC20_ABI, this.signer);
+    const tokenContracts = {
+      pUSD: new ethers.Contract(POLYGON_CONTRACTS_V2.pUSD, ERC20_ABI, this.signer),
+      'USDC.e': new ethers.Contract(POLYGON_CONTRACTS_V2.usdcE, ERC20_ABI, this.signer),
+    } as const;
     const conditionalTokens = new ethers.Contract(CONDITIONAL_TOKENS, ERC1155_ABI, this.signer);
 
     // Get gas price with buffer
     const gasPrice = await this.provider.getGasPrice();
     const adjustedGasPrice = gasPrice.mul(150).div(100); // 1.5x
 
-    // Process ERC20 approvals
+    // Process ERC20 approvals (token-aware)
     const erc20Results: ApprovalTxResult[] = [];
-    for (const spender of ERC20_SPENDERS) {
+    for (const spender of ERC20_SPENDERS_V2) {
+      const tokenContract = tokenContracts[spender.token];
+
       // Check current allowance
-      const allowance = await usdc.allowance(walletAddress, spender.address);
+      const allowance = await tokenContract.allowance(walletAddress, spender.address);
       const allowanceNum = parseFloat(ethers.utils.formatUnits(allowance, 6));
 
       if (allowanceNum > 1e12) {
         // Already approved
         erc20Results.push({
           contract: spender.name,
+          token: spender.token,
           success: true,
         });
         continue;
       }
 
       try {
-        const tx = await usdc.approve(spender.address, ethers.constants.MaxUint256, {
+        const tx = await tokenContract.approve(spender.address, ethers.constants.MaxUint256, {
           gasPrice: adjustedGasPrice,
         });
         await tx.wait();
         erc20Results.push({
           contract: spender.name,
+          token: spender.token,
           txHash: tx.hash,
           success: true,
         });
       } catch (err) {
         erc20Results.push({
           contract: spender.name,
+          token: spender.token,
           success: false,
           error: err instanceof Error ? err.message : 'Unknown error',
         });
@@ -239,7 +315,7 @@ export class AuthorizationService {
 
     // Process ERC1155 approvals
     const erc1155Results: ApprovalTxResult[] = [];
-    for (const operator of ERC1155_OPERATORS) {
+    for (const operator of ERC1155_OPERATORS_V2) {
       // Check current approval
       const isApproved = await conditionalTokens.isApprovedForAll(walletAddress, operator.address);
 
@@ -291,31 +367,39 @@ export class AuthorizationService {
   }
 
   /**
-   * Approve USDC spending for a specific contract
+   * Approve a single ERC20 spender.
+   *
+   * Defaults to pUSD (V2 trading collateral). Pass `token: 'USDC.e'` for
+   * Onramp / off-exchange paths.
    *
    * @param spenderAddress - The contract address to approve
    * @param amount - The amount to approve (default: unlimited)
+   * @param token - Which ERC20 to approve from (default: pUSD)
    */
   async approveUsdc(
     spenderAddress: string,
-    amount: ethers.BigNumber = ethers.constants.MaxUint256
+    amount: ethers.BigNumber = ethers.constants.MaxUint256,
+    token: 'pUSD' | 'USDC.e' = 'pUSD'
   ): Promise<ApprovalTxResult> {
-    const usdc = new ethers.Contract(USDC_CONTRACT, ERC20_ABI, this.signer);
+    const tokenAddress = this.erc20ContractForToken(token);
+    const erc20 = new ethers.Contract(tokenAddress, ERC20_ABI, this.signer);
     const gasPrice = await this.provider.getGasPrice();
 
     try {
-      const tx = await usdc.approve(spenderAddress, amount, {
+      const tx = await erc20.approve(spenderAddress, amount, {
         gasPrice: gasPrice.mul(150).div(100),
       });
       await tx.wait();
       return {
         contract: spenderAddress,
+        token,
         txHash: tx.hash,
         success: true,
       };
     } catch (err) {
       return {
         contract: spenderAddress,
+        token,
         success: false,
         error: err instanceof Error ? err.message : 'Unknown error',
       };

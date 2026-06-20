@@ -82,8 +82,8 @@ All Polymarket-specific rules enforced before submission:
 
 - **Tick size**: Price must be multiple of 0.01
 - **Minimum size**: At least 5 shares
-- **Minimum value**: At least $1 USDC
-- **Balance check**: Sufficient USDC.e balance
+- **Minimum value**: At least $1 pUSD notional
+- **Balance check**: Sufficient pUSD trading balance
 - **Market status**: Market is active and not closed
 
 ### 4. Hybrid Detection
@@ -447,7 +447,7 @@ await orderMgr.createOrder({ size: 3, ... });    // Error: BELOW_MINIMUM_SIZE
 await orderMgr.createOrder({ size: 1, ... });    // Error: BELOW_MINIMUM_SIZE
 ```
 
-#### 3. Minimum Value ($1 USDC)
+#### 3. Minimum Value ($1 pUSD)
 
 Order value (size × price) must be at least $1:
 
@@ -495,10 +495,10 @@ if (!result.success) {
 **Error Codes**:
 - `INVALID_TICK_SIZE`: Price not a multiple of 0.01
 - `BELOW_MINIMUM_SIZE`: Size < 5 shares
-- `BELOW_MINIMUM_VALUE`: Value < $1 USDC
+- `BELOW_MINIMUM_VALUE`: Value < $1 pUSD notional
 - `INVALID_PRICE_RANGE`: Price outside [0.001, 0.999]
 - `MARKET_NOT_TRADEABLE`: Market is closed or inactive
-- `INSUFFICIENT_BALANCE`: Not enough USDC.e
+- `INSUFFICIENT_BALANCE`: Not enough pUSD
 
 ---
 
@@ -677,7 +677,7 @@ if (!result.success) {
 
   // Error categories:
   // - Validation errors (tick size, minimum size, etc.)
-  // - Balance errors (insufficient USDC.e)
+  // - Balance errors (insufficient pUSD)
   // - Network errors (CLOB API unavailable)
   // - Market errors (market closed, inactive)
 }

@@ -43,15 +43,15 @@ CTFManager (EventEmitter)
 
 3. **事件模式识别**
    ```typescript
-   // Split: USDC → YES + NO tokens
+   // Split: pUSD → YES + NO tokens
    from=0x0, to=user, id=YES (TransferSingle)
    from=0x0, to=user, id=NO  (TransferSingle)
 
-   // Merge: YES + NO tokens → USDC
+   // Merge: YES + NO tokens → pUSD
    from=user, to=0x0, id=YES (TransferSingle)
    from=user, to=0x0, id=NO  (TransferSingle)
 
-   // Redeem: Winning token → USDC
+   // Redeem: Winning token → pUSD
    from=user, to=0x0, id=winningToken (TransferSingle)
    ```
 
@@ -69,18 +69,18 @@ CTFManager (EventEmitter)
 CTFManager 测试非常经济，因为 Split→Merge 循环几乎完全恢复资金：
 
 ```
-USDC.e (1.0) → Split → YES (1.0) + NO (1.0)
+pUSD (1.0) → Split → YES (1.0) + NO (1.0)
                          ↓
                       Merge
                          ↓
-                   USDC.e (1.0)
+                    pUSD (1.0)
 ```
 
 | 项目 | OrderManager | CTFManager |
 |------|-------------|------------|
-| 单次测试成本 | 0.05-0.50 USDC | 0.01-0.05 USDC |
+| 单次测试成本 | 0.05-0.50 pUSD | 0.01-0.05 pUSD |
 | 资金回收率 | 95-99% | 99.9% |
-| 10 次测试成本 | 0.5-5 USDC | 0.1-0.5 USDC |
+| 10 次测试成本 | 0.5-5 pUSD | 0.1-0.5 pUSD |
 
 ## 测试套件
 
@@ -91,9 +91,9 @@ USDC.e (1.0) → Split → YES (1.0) + NO (1.0)
 
 **流程**：
 ```
-1. Split 1.0 USDC.e → YES + NO tokens
+1. Split 1.0 pUSD → YES + NO tokens
 2. Wait for split_detected event
-3. Merge tokens → USDC.e
+3. Merge tokens → pUSD
 4. Wait for merge_detected event
 5. Verify balance recovery
 ```
@@ -108,7 +108,7 @@ npx tsx scripts/ctfmanager/quick-test.ts
 ```
 
 **要求**：
-- USDC.e: ~2 USDC.e
+- pUSD: ~2 pUSD
 - MATIC: ~0.1 MATIC
 - 时长: ~20 秒
 
@@ -118,7 +118,7 @@ npx tsx scripts/ctfmanager/quick-test.ts
 **流程**：
 ```
 循环 N 次 (默认 5 次)：
-  1. Split 1.0 USDC.e
+  1. Split 1.0 pUSD
   2. Verify split_detected
   3. Merge tokens
   4. Verify merge_detected
@@ -133,7 +133,7 @@ npx tsx scripts/ctfmanager/cycle-test.ts
 ```
 
 **要求**：
-- USDC.e: ~5 USDC.e
+- pUSD: ~5 pUSD
 - MATIC: ~0.5 MATIC
 - 时长: ~60 秒
 
@@ -142,8 +142,8 @@ npx tsx scripts/ctfmanager/cycle-test.ts
 
 **流程**：
 ```
-1. Split 2.0 USDC.e
-2. Merge 1.0 USDC.e (保留一半用于 Redeem)
+1. Split 2.0 pUSD
+2. Merge 1.0 pUSD (保留一半用于 Redeem)
 3. 等待市场结算
 4. Redeem winning tokens
 ```
@@ -157,7 +157,7 @@ npx tsx scripts/ctfmanager/full-e2e.ts
 ```
 
 **要求**：
-- USDC.e: ~5 USDC.e
+- pUSD: ~5 pUSD
 - MATIC: ~0.2 MATIC
 - 时长: 15 分钟（如果等待 15 分钟加密货币市场结算）
 
@@ -329,9 +329,9 @@ import { CTFDetector } from '@catalyst-team/poly-sdk';
 
 ### 资金要求
 
-- **最小测试**：2 USDC.e + 0.1 MATIC
-- **完整测试**：5 USDC.e + 0.5 MATIC
-- **持续测试**：10 USDC.e + 1 MATIC
+- **最小测试**：2 pUSD + 0.1 MATIC
+- **完整测试**：5 pUSD + 0.5 MATIC
+- **持续测试**：10 pUSD + 1 MATIC
 
 ## 常见问题
 

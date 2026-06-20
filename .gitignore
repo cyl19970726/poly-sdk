@@ -31,4 +31,8 @@ coverage/
 # Cache
 .cache/
 *.tsbuildinfo
-.mcp.json.test-creds.json
+.mcp.json
+.test-creds.json
+
+# Keys
+*.pem

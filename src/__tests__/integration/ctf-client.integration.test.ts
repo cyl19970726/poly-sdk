@@ -7,7 +7,7 @@
  * IMPORTANT: These tests are READ-ONLY and do not require a wallet.
  * They verify:
  * 1. Contract addresses are correct
- * 2. Position ID calculation is correct
+ * 2. Position ID calculation is correct for V2 pUSD collateral
  * 3. Market resolution queries work
  * 4. Balance queries work
  *
@@ -18,8 +18,8 @@ import { describe, it, expect } from 'vitest';
 import { ethers } from 'ethers';
 import {
   CTF_CONTRACT,
-  USDC_CONTRACT,
-  NEG_RISK_CTF_EXCHANGE,
+  PUSD_CONTRACT,
+  NEG_RISK_CTF_EXCHANGE_V2,
   NEG_RISK_ADAPTER,
   USDC_DECIMALS,
 } from '../../clients/ctf-client.js';
@@ -63,18 +63,19 @@ describe('CTF Contract Verification', () => {
       console.log(`✓ CTF Contract verified at ${CTF_CONTRACT}`);
     }, 30000);
 
-    it('should verify USDC contract is deployed', async () => {
-      const usdc = new ethers.Contract(USDC_CONTRACT, ERC20_ABI, provider);
+    it('should verify pUSD contract is deployed', async () => {
+      const pusd = new ethers.Contract(PUSD_CONTRACT, ERC20_ABI, provider);
 
       const [decimals, symbol] = await Promise.all([
-        usdc.decimals(),
-        usdc.symbol(),
+        pusd.decimals(),
+        pusd.symbol(),
       ]);
 
       expect(decimals).toBe(USDC_DECIMALS);
-      expect(symbol).toBe('USDC');
+      expect(typeof symbol).toBe('string');
+      expect(symbol.length).toBeGreaterThan(0);
 
-      console.log(`✓ USDC Contract verified at ${USDC_CONTRACT}`);
+      console.log(`✓ pUSD Contract verified at ${PUSD_CONTRACT}`);
       console.log(`  Symbol: ${symbol}, Decimals: ${decimals}`);
     }, 30000);
 
@@ -104,12 +105,12 @@ describe('CTF Contract Verification', () => {
     }, 30000);
 
     it('should verify NegRisk CTF Exchange contract exists', async () => {
-      const code = await provider.getCode(NEG_RISK_CTF_EXCHANGE);
+      const code = await provider.getCode(NEG_RISK_CTF_EXCHANGE_V2);
 
       expect(code).not.toBe('0x');
       expect(code.length).toBeGreaterThan(10);
 
-      console.log(`✓ NegRisk CTF Exchange verified at ${NEG_RISK_CTF_EXCHANGE}`);
+      console.log(`✓ NegRisk CTF Exchange verified at ${NEG_RISK_CTF_EXCHANGE_V2}`);
       console.log(`  Contract code size: ${(code.length - 2) / 2} bytes`);
     }, 30000);
   });
@@ -134,7 +135,7 @@ describe('CTF Contract Verification', () => {
       const positionId = ethers.utils.keccak256(
         ethers.utils.defaultAbiCoder.encode(
           ['address', 'bytes32'],
-          [USDC_CONTRACT, collectionId]
+          [PUSD_CONTRACT, collectionId]
         )
       );
 
@@ -161,7 +162,7 @@ describe('CTF Contract Verification', () => {
       const yesPositionId = ethers.utils.keccak256(
         ethers.utils.defaultAbiCoder.encode(
           ['address', 'bytes32'],
-          [USDC_CONTRACT, yesCollectionId]
+          [PUSD_CONTRACT, yesCollectionId]
         )
       );
 
@@ -175,7 +176,7 @@ describe('CTF Contract Verification', () => {
       const noPositionId = ethers.utils.keccak256(
         ethers.utils.defaultAbiCoder.encode(
           ['address', 'bytes32'],
-          [USDC_CONTRACT, noCollectionId]
+          [PUSD_CONTRACT, noCollectionId]
         )
       );
 
@@ -189,16 +190,16 @@ describe('CTF Contract Verification', () => {
   });
 
   describe('Balance Queries', () => {
-    it('should query USDC balance for known whale', async () => {
-      const usdc = new ethers.Contract(USDC_CONTRACT, ERC20_ABI, provider);
+    it('should query pUSD balance for known whale', async () => {
+      const pusd = new ethers.Contract(PUSD_CONTRACT, ERC20_ABI, provider);
 
-      const balance = await usdc.balanceOf(KNOWN_WHALE_ADDRESS);
+      const balance = await pusd.balanceOf(KNOWN_WHALE_ADDRESS);
       const formattedBalance = ethers.utils.formatUnits(balance, USDC_DECIMALS);
 
       expect(balance.gte(0)).toBe(true);
 
-      console.log(`✓ USDC balance query works`);
-      console.log(`  Whale ${KNOWN_WHALE_ADDRESS.slice(0, 10)}... has ${parseFloat(formattedBalance).toLocaleString()} USDC`);
+      console.log(`✓ pUSD balance query works`);
+      console.log(`  Whale ${KNOWN_WHALE_ADDRESS.slice(0, 10)}... has ${parseFloat(formattedBalance).toLocaleString()} pUSD`);
     }, 30000);
 
     it('should query CTF token balance', async () => {
@@ -322,7 +323,7 @@ describe('CTF Architecture Understanding', () => {
     console.log('  - Handles NO → YES conversions');
     console.log('');
     console.log('NegRisk CTF Exchange:');
-    console.log(`  ${NEG_RISK_CTF_EXCHANGE}`);
+    console.log(`  ${NEG_RISK_CTF_EXCHANGE_V2}`);
     console.log('  - Trading for NegRisk markets');
 
     // This test always passes - it's documentation

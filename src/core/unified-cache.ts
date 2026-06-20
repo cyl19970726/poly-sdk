@@ -11,6 +11,9 @@
 
 import type { CacheAdapter } from '@catalyst-team/cache';
 import { Cache, CACHE_TTL } from './cache.js';
+import { createModuleLogger } from './logger.js';
+
+const log = createModuleLogger('unified-cache');
 
 /**
  * Unified cache interface that works with both legacy Cache and CacheAdapter
@@ -115,9 +118,7 @@ export class CacheAdapterWrapper implements UnifiedCache {
   async invalidate(pattern: string): Promise<void> {
     // CacheAdapter doesn't have pattern matching
     // Best we can do is warn - this is a limitation
-    console.warn(
-      `invalidate(pattern="${pattern}") not fully supported with external cache adapter`
-    );
+    log.warn(`invalidate(pattern="${pattern}") not fully supported with external cache adapter`);
   }
 
   clear(): void {

@@ -8,6 +8,9 @@
 
 import type { CacheAdapter } from '@catalyst-team/cache';
 import { Cache } from './cache.js';
+import { createModuleLogger } from './logger.js';
+
+const log = createModuleLogger('cache-adapter');
 
 /**
  * Wraps the legacy Cache class to implement CacheAdapter interface
@@ -80,7 +83,7 @@ export class CacheAdapterWrapper {
   invalidate(pattern: string): void {
     // CacheAdapter doesn't have pattern matching, so we can't implement this
     // This is a limitation of the adapter approach
-    console.warn('invalidate(pattern) not supported with external cache adapter');
+    log.warn('invalidate(pattern) not supported with external cache adapter');
   }
 
   clear(): void {

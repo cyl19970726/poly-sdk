@@ -19,7 +19,7 @@ describe('ArbitrageService Integration', () => {
   beforeAll(async () => {
     // Find a liquid market for testing
     const response = await fetch(
-      'https://gamma-api.polymarket.com/markets?active=true&limit=1&order=volume24hr&ascending=false'
+      'https://gamma-api.polymarket.com/markets?active=true&limit=20&order=volume24hr&ascending=false'
     );
     const markets = await response.json() as Array<{
       conditionId: string;
@@ -31,27 +31,30 @@ describe('ArbitrageService Integration', () => {
       throw new Error('No active markets found for testing');
     }
 
-    const gammaMarket = markets[0];
-    console.log(`Using test market: "${gammaMarket.question.slice(0, 50)}..."`);
+    for (const gammaMarket of markets) {
+      if (gammaMarket.outcomes?.length !== 2) {
+        continue;
+      }
 
-    // Get token IDs from CLOB API
-    const clobResponse = await fetch(`https://clob.polymarket.com/markets/${gammaMarket.conditionId}`);
-    const clobMarket = await clobResponse.json() as { tokens: Array<{ token_id: string; outcome: string }> };
+      const clobResponse = await fetch(`https://clob.polymarket.com/markets/${gammaMarket.conditionId}`);
+      const clobMarket = await clobResponse.json() as { tokens: Array<{ token_id: string; outcome: string }> };
 
-    const yesToken = clobMarket.tokens.find(t => t.outcome === 'Yes');
-    const noToken = clobMarket.tokens.find(t => t.outcome === 'No');
+      if (clobMarket.tokens.length !== 2) {
+        continue;
+      }
 
-    if (!yesToken || !noToken) {
-      throw new Error('Market does not have YES/NO tokens');
+      console.log(`Using test market: "${gammaMarket.question.slice(0, 50)}..."`);
+      testMarket = {
+        name: gammaMarket.question.slice(0, 50),
+        conditionId: gammaMarket.conditionId,
+        yesTokenId: clobMarket.tokens[0].token_id,
+        noTokenId: clobMarket.tokens[1].token_id,
+        outcomes: (gammaMarket.outcomes || ['Outcome 1', 'Outcome 2']) as [string, string],
+      };
+      return;
     }
 
-    testMarket = {
-      name: gammaMarket.question.slice(0, 50),
-      conditionId: gammaMarket.conditionId,
-      yesTokenId: yesToken.token_id,
-      noTokenId: noToken.token_id,
-      outcomes: (gammaMarket.outcomes || ['Yes', 'No']) as [string, string],
-    };
+    throw new Error('No binary active markets found for testing');
   }, 60000);
 
   afterEach(async () => {

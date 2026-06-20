@@ -1016,4 +1016,4 @@ sdk.stop();
 
 - [Polymarket Subgraph - Orderbook](https://thegraph.com/hosted-service/subgraph/polymarket/polymarket-orderbook-resync)
 - [Polygon Block Time](https://polygonscan.com/chart/blocktime) - ~2 seconds
-- [@polymarket/clob-client](https://github.com/Polymarket/clob-client)
+- [@polymarket/clob-client-v2](https://www.npmjs.com/package/@polymarket/clob-client-v2)

@@ -9,7 +9,7 @@
  * Run: npx tsx examples/07-realtime-websocket.ts
  */
 
-import { PolymarketSDK, RealtimeServiceV2 } from '../src/index.js';
+import { PolymarketSDK, RealtimeServiceV2, getBinaryTokens } from '../src/index.js';
 
 async function main() {
   console.log('=== Real-time WebSocket Demo (V2) ===\n');
@@ -31,19 +31,18 @@ async function main() {
   // 2. Get market details for token IDs
   console.log('2. Getting market details...');
   const unifiedMarket = await sdk.markets.getMarket(market.conditionId);
-  const yesToken = unifiedMarket.tokens.find(t => t.outcome === 'Yes');
-  const noToken = unifiedMarket.tokens.find(t => t.outcome === 'No');
-  const yesTokenId = yesToken?.tokenId || '';
-  const noTokenId = noToken?.tokenId || '';
-  console.log(`   YES Token: ${yesTokenId.slice(0, 20)}...`);
-  console.log(`   NO Token: ${noTokenId.slice(0, 20)}...`);
-  console.log(`   Current YES Price: ${yesToken?.price}`);
-  console.log(`   Current NO Price: ${noToken?.price}\n`);
-
-  if (!yesTokenId || !noTokenId) {
-    console.log('No token IDs available for this market');
+  const binary = getBinaryTokens(unifiedMarket.tokens);
+  if (!binary) {
+    console.log('No binary token pair available for this market');
     return;
   }
+  const [yesOutcome, noOutcome] = binary.outcomes;
+  const yesTokenId = binary.primary.tokenId;
+  const noTokenId = binary.secondary.tokenId;
+  console.log(`   YES Token (${yesOutcome}): ${yesTokenId.slice(0, 20)}...`);
+  console.log(`   NO Token (${noOutcome}): ${noTokenId.slice(0, 20)}...`);
+  console.log(`   Current YES Price (${yesOutcome}): ${binary.primary.price}`);
+  console.log(`   Current NO Price (${noOutcome}): ${binary.secondary.price}\n`);
 
   // 3. Create RealtimeServiceV2 and connect
   console.log('3. Connecting to WebSocket...');
@@ -70,23 +69,23 @@ async function main() {
   const subscription = realtime.subscribeMarket(yesTokenId, noTokenId, {
     onOrderbook: (book) => {
       updateCount++;
-      const side = book.assetId === yesTokenId ? 'YES' : 'NO';
+      const side = book.assetId === yesTokenId ? `YES/${yesOutcome}` : `NO/${noOutcome}`;
       const bestBid = book.bids[0];
       const bestAsk = book.asks[0];
       console.log(`   [${new Date().toLocaleTimeString()}] ${side} Book: Bid ${bestBid?.price.toFixed(4)} (${bestBid?.size.toFixed(0)}) | Ask ${bestAsk?.price.toFixed(4)} (${bestAsk?.size.toFixed(0)})`);
     },
     onPriceUpdate: (update) => {
-      const side = update.assetId === yesTokenId ? 'YES' : 'NO';
+      const side = update.assetId === yesTokenId ? `YES/${yesOutcome}` : `NO/${noOutcome}`;
       console.log(`   [${new Date().toLocaleTimeString()}] ${side} Price: ${update.price.toFixed(4)} (mid: ${update.midpoint.toFixed(4)}, spread: ${update.spread.toFixed(4)})`);
     },
     onLastTrade: (trade) => {
-      const side = trade.assetId === yesTokenId ? 'YES' : 'NO';
+      const side = trade.assetId === yesTokenId ? `YES/${yesOutcome}` : `NO/${noOutcome}`;
       console.log(`   [${new Date().toLocaleTimeString()}] ${side} Trade: ${trade.side} ${trade.size} @ ${trade.price.toFixed(4)}`);
     },
     onPairUpdate: (update) => {
       const spread = update.spread;
       const arbSignal = spread < 0.99 ? 'ARB!' : spread > 1.01 ? 'ARB!' : 'OK';
-      console.log(`   [${new Date().toLocaleTimeString()}] PAIR: YES ${update.yes.price.toFixed(4)} + NO ${update.no.price.toFixed(4)} = ${spread.toFixed(4)} [${arbSignal}]`);
+      console.log(`   [${new Date().toLocaleTimeString()}] PAIR: YES/${yesOutcome} ${update.yes.price.toFixed(4)} + NO/${noOutcome} ${update.no.price.toFixed(4)} = ${spread.toFixed(4)} [${arbSignal}]`);
     },
     onError: (error) => {
       console.error(`   Error: ${error.message}`);
